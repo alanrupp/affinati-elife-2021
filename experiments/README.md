@@ -6,8 +6,6 @@ This directory contains all the data and analyses from the manuscript.
   * **GSE93374**: data from [Campbell et al. 2017](https://www.nature.com/articles/nn.4495) for the `campbell` analysis
   * **NovaA.+** and **Run.+**: raw matrix files from `cellranger`
   * **ypx3sw2f7c.2**: data from [Kim et al. 2019](https://doi.org/10.17632/ypx3sw2f7c.2) for the `integration` analysis
-  * `annotation.csv`: gene functional annotation
-  * `celltype_modules.csv`: cell-type marker genes from `analysis/modules.R`
   * `mouse_to_macaque.tsv.gz`: ortholog mapper from Ensembl
 * **analysis**
   * **campbell**: integrating our dataset with data from [Campbell et al. 2017](https://www.nature.com/articles/nn.4495)

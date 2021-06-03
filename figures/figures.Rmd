@@ -1,0 +1,2739 @@
+---
+title: "Figures"
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%b %d, %Y')`"
+output: pdf_document
+geometry: margin=0.5in
+---
+
+Script to generate figures for the Affinati et al. manuscript.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.align = "center")
+library(tidyverse)
+library(Seurat)
+library(knitr); library(kableExtra)
+options(bitmapType = "cairo")
+options(future.globals.maxSize = 3000 * 1024^2)
+map(list.files("../tools/dropseq3/R", full.names = TRUE), source)
+```
+
+\pagebreak
+
+# Mouse cells
+Analysis of all mouse data
+
+## Figure 1--Figure Supplement 1
+```{r}
+srt <- readRDS("../experiments/snRNA-seq/analysis/mouse/mouse.rds")
+```
+
+```{r}
+# recode sample and run names to standardize them
+srt$Sample <- factor(
+  srt$Sample,
+  levels = unique(srt$Sample),
+  labels = paste0("Sample_", LETTERS[1:length(unique(srt$Sample))])
+)
+srt$Run <- factor(
+  srt$Run,
+  levels = unique(srt$Run),
+  labels = paste0("Run_", 1:length(unique(srt$Run)))
+)
+names(srt@misc$sample_colors) <- levels(srt$Sample)
+names(srt@misc$run_colors) <- levels(srt$Run)
+```
+
+```{r, fig.width = 2.2, fig.height = 1.9}
+fig_cells <- table(srt$Sample, srt$Run) %>%
+  as.data.frame() %>%
+  filter(Freq != 0) %>%
+  rename("Sample" = Var1, "Run" = Var2) %>%
+  select(-starts_with("Var")) %>%
+  ggplot(aes(x = Sample, y = Freq, fill = Run)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = srt@misc$run_colors,
+                    name = expression(underline("Run"))) +
+  ggtitle("Cells") +
+  theme_void() +
+  theme(axis.text.x = element_text(color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(color = "black", size = 7),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.key.width = unit(0.1, "in"),
+        legend.key.height = unit(0.05, "in"),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 8))
+```
+
+```{r, fig.width = 4, fig.height = 1.9}
+plot_metadata <- function(measure, title = NULL) {
+  data.frame(
+    "metadata" = srt@meta.data[, measure],
+    "Sample" = srt$Sample,
+    "Run"= srt$Run
+    ) %>%
+    ggplot(aes(x = Sample, y = metadata, fill = Run)) +
+    geom_violin() +
+    scale_fill_manual(values = srt@misc$run_colors,
+                      name = expression(underline("Run"))) +
+    scale_y_continuous(trans = "log2") +
+    ggtitle(title) +
+    theme_void() +
+  theme(axis.text.x = element_text(color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(color = "black", size = 7),
+        strip.text = element_text(size = 10),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 7),
+        legend.key.height = unit(0.02, "in"),
+        legend.key.width = unit(0.08, "in"),
+        plot.title = element_text(hjust = 0.5, size = 10))
+}
+
+fig_genes <- plot_metadata("nFeature_RNA", "Genes") +
+  theme(legend.position = "none")
+fig_umis <- plot_metadata("nCount_RNA", "UMIs")
+```
+
+```{r plot-metadata, fig.height = 1.9, fig.width = 4.5}
+cowplot::plot_grid(plotlist = list(
+  fig_cells + theme(legend.position = "none"), fig_genes, fig_umis),
+  ncol = 3, rel_widths = c(1, 1, 1.3))
+
+ggsave("panels/1_S1A.png", width = 7.5, height = 2, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+dim_plot(srt, repel = TRUE, label_size = 2, point_size = 0.4) +
+  scale_color_manual(values = srt@misc$cluster_colors)
+
+ggsave("panels/1_S1D.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.3, fig.height = 2.7}
+table(srt@active.ident, srt$Sample) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Freq" = Freq / sum(Freq) * 100) %>%
+  group_by(Var1) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Var1), y = avg, fill = Var1)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = srt@misc$cluster_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("% cells / dataset") +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 7),
+        axis.title.x = element_text(size = 8)) +
+  coord_flip()
+
+ggsave("panels/1_S1E.png", width = 1.3, height = 2.7, units = "in", dpi = 400)
+```
+
+```{r}
+violin_plot(srt, c("Vtn", "Cx3cr1", "Mog", "Pdgfra", "Lingo2", "Slc7a10",
+                   "Tshr", "Ccdc153"),
+            stacked = TRUE) +
+  scale_fill_manual(values = srt@misc$cluster_colors) +
+  xlab(NULL) +
+  theme(axis.text.x = element_text(size = 7, color = "black", angle = 0,
+                                   hjust = 0.5, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank())
+
+ggsave("panels/1_S1F.png", width = 3.2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.7, fig.width = 3.6}
+marker_genes <-
+  filter(srt@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+srt <- scale_data(srt, genes = marker_genes, groups = "Sample")
+df <- srt@assays$RNA@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = srt@active.ident),
+    "cell" = names(srt@active.ident)
+    ) %>%
+  gather(-cluster, -cell, key = "gene", value = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 3),
+                       labels = c("<0", 0, 1, 2, ">3")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = srt@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/1_S1G.png", width = 3.2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r}
+celltypes <- srt$Celltype
+names(celltypes) <- srt@active.ident
+celltypes <- celltypes[!duplicated(names(celltypes))]
+celltypes <- celltypes[order(factor(names(celltypes), levels = 1:length(celltypes)))]
+
+rgb2hex <- function(r, g, b) rgb(r, g, b, maxColorValue = 255)
+average_colors <- function(colors, groupby) {
+  groups <- unique(groupby)
+  sapply(groups, function(x) {
+    mtx <- col2rgb(colors[groupby == x])
+    avg <- rowMeans(mtx)
+    rgb2hex(avg["red"], avg["green"], avg["blue"])
+  })
+}
+class_colors <- average_colors(srt@misc$cluster_colors, celltypes)
+names(class_colors) <- unique(celltypes)
+
+DimPlot(srt, group.by = "Celltype", label = TRUE, label.size = 2) +
+  scale_color_manual(values = class_colors) +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("panels/1_S1H.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.3, fig.height = 2.7}
+table(srt$Celltype, srt$Sample) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Freq" = Freq / sum(Freq) * 100) %>%
+  group_by(Var1) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Var1), y = avg, fill = Var1)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = class_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("% cells / dataset") +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 7),
+        axis.title.x = element_text(size = 8)) +
+  coord_flip()
+
+ggsave("panels/1_S1I.png", width = 1.5, height = 2.6, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+# Figure 1: Mouse neurons
+
+```{r}
+# load mouse neuron dataset
+rm(srt); gc()
+neurons <- readRDS("../experiments/snRNA-seq/analysis/mouse/neurons.rds")
+```
+
+```{r}
+# turn cluster names into numbers for simplicity
+neurons@active.ident <- factor(as.numeric(neurons@active.ident))
+names(neurons@active.ident) <- Cells(neurons)
+names(neurons@misc$cluster_colors) <- levels(neurons@active.ident)
+```
+
+```{r 1b, fig.width = 2.5, fig.height = 2.5}
+dim_plot(neurons, label_size = 2, point_size = 0.4) +
+  scale_color_manual(values = neurons@misc$cluster_colors)
+
+ggsave("panels/1B.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.6, fig.width = 2.5}
+do_heatmap <- function(object, genes, min_z = -1, max_z = 3,
+                       color_block = TRUE, block_scaling = 0.03) {
+  df <- object[["RNA"]]@scale.data[genes, ] %>%
+    Matrix::t() %>%
+    as.matrix() %>%
+    as.data.frame() %>%
+    bind_cols(., data.frame(
+      "cluster" = object@active.ident,
+      "cell" = names(object@active.ident)
+      )) %>%
+    pivot_longer(-c(cluster, cell), names_to = "gene", values_to = "expr") %>%
+    mutate(gene = factor(gene, levels = genes)) %>%
+    arrange(cluster) %>%
+    mutate(cell = factor(cell, levels = unique(cell))) %>%
+    mutate(expr = ifelse(expr > max_z, max_z, ifelse(expr < min_z, min_z, expr)))
+  p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                         name = "Scaled\nexpression",
+                         breaks = seq(min_z, max_z),
+                         labels = seq(min_z, max_z),
+                         limits = c(min_z, max_z)) +
+    theme_void() +
+    theme(legend.position = "bottom", legend.direction = "horizontal",
+          legend.key.height = unit(0.03, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6),
+          panel.border = element_rect(fill = NA, color = "black"))
+  # add cluster color bars
+  if (color_block) {
+    cluster_table <- df %>% group_by(cluster) %>% count() %>%
+      mutate(n = n / length(genes)) %>% ungroup() %>%
+      mutate("end" = cumsum(n)) %>%
+      mutate("start" = lag(end, default = 0) + 1)
+    for (i in 1:nrow(cluster_table)) {
+      p <- p + annotate(
+        "rect",
+        xmin = cluster_table[i, ]$start,
+        xmax = cluster_table[i, ]$end,
+        ymin = 0.5-length(genes)*block_scaling,
+        ymax = 0.5,
+        fill = object@misc$cluster_colors[i],
+        color = "black"
+      )
+    }
+  }
+  p
+}
+
+# get marker genes for clusters
+marker_genes <- filter(neurons@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+
+# plot on top of one another
+p <- cowplot::plot_grid(plotlist = list(
+  do_heatmap(neurons, marker_genes, color_block = FALSE) +
+    theme(legend.position = "none"),
+  do_heatmap(neurons, c("Gad1", "Slc17a6"), block_scaling = 0.5)
+), rel_heights = c(1, 0.2), ncol = 1)
+
+p
+
+ggsave("panels/1C.png", p, width = 2.5, height = 2.6, units = "in", dpi = 300)
+```
+
+```{r, fig.width = 1.5, fig.height = 3}
+data.frame(
+  "cell" = colnames(neurons),
+  "UMAP1" = neurons[["umap"]]@cell.embeddings[,1],
+  "UMAP2" = neurons[["umap"]]cell.embeddings[,2],
+  "Nr5a1" = neurons[["RNA"]]@data["Nr5a1", ],
+  "Fezf1" = neurons[["RNA"]]@data["Fezf1", ]
+) %>%
+  pivot_longer(-c(cell, UMAP1, UMAP2), names_to = "gene", values_to = "expr") %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = expr)) +
+  geom_point(stroke = 0, size = 0.4) +
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f",
+                       name = "Normalized\nexpression") +
+  theme_void() +
+  facet_wrap(~gene, ncol = 1) +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.title = element_text(size = 6),
+        legend.text = element_text(size = 6),
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.15, "in"),
+        strip.text = element_text(face = "italic", size = 8))
+
+ggsave("panels/1D.png", width = 1.3, height = 2.6, units = "in", dpi = 400)
+```
+
+```{r}
+sf1 <- read_csv("../experiments/TRAP-seq/VMH_Nr5a1/results.csv")
+
+ggplot(sf1, aes(x = Bead, y = Enrichment, color = P < 0.05)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_point(alpha = 0.4, stroke = 0) +
+  scale_x_continuous(trans = "log2", limits = c(1, NA), expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_color_manual(values = c("#ede5cf", "#541f3f"), guide = FALSE) +
+  geom_text_repel(data = filter(sf1, Gene %in% c("Nr5a1", "Fezf1")),
+            aes(label = Gene), show.legend = FALSE, size = 2) +
+  theme_classic() +
+  xlab("Expression (CPM)") +
+  ylab(expression("Enrichment (log"[2]*" Bead/Sup)")) +
+  coord_cartesian(ylim = c(0, NA)) +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        axis.title = element_text(size = 7),
+        axis.text = element_text(color = "black", size = 6)) +
+  annotate("label", x = 2, y = 5.3, hjust = 0,
+           label = expression(italic("P")*" < 0.05"), color = "#541f3f",
+           size = 1.5)
+
+ggsave("panels/1F.png", width = 1.8, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r}
+# write Supplementary File 1
+if (!dir.exists("tables")) dir.create("tables")
+sf1 %>%
+  arrange(desc(P < 0.05), desc(Enrichment)) %>%
+  mutate_at(vars(Bead, Sup, Enrichment), ~ round(.x, 2)) %>%
+  mutate("P" = format(P, digits = 2, scientific = TRUE)) %>%
+  write.csv(., "tables/Supplementary File 1_Nr5a1-TRAP.csv", row.names = FALSE, na = "")
+```
+
+```{r}
+top_enriched <- sf1 %>% filter(
+  Bead > 10 & P < 0.05 & Enrichment > 1 &
+    Gene %in% rownames(neurons@assays$RNA@scale.data)[
+      rowSums(is.na(neurons@assays$RNA@scale.data)) == 0]
+)
+
+p <- do_heatmap(neurons, top_enriched$Gene, block_scaling = 0.04) +
+  ggtitle(expression(italic("Nr5a1")*" TRAP-enriched genes")) +
+  theme(plot.title = element_text(size = 8, hjust = 0.5))
+
+# add annotation rect of VMH populations
+p <- p + annotate(
+  "rect",
+  xmin = min(filter(cluster_table, cluster %in% 6:11)$start),
+  xmax = max(filter(cluster_table, cluster %in% 6:11)$end),
+  ymin = 0.5-length(top_enriched$Gene)*0.04,
+  ymax = length(top_enriched$Gene) + 0.5,
+  fill = NA, color = "gray", size = 1
+)
+
+p
+
+ggsave("panels/1G.png", p, width = 2.5, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.5, fig.height = 1.6}
+data.frame(
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[, 1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[, 2],
+  "Sf1" = neurons$Sf1
+) %>%
+  mutate(Sf1 = ifelse(Sf1 > 10, 10, ifelse(Sf1 < -10, -10, Sf1))) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = Sf1)) +
+    geom_point(stroke = 0, size = 0.5) +
+    theme_void() +
+    scale_color_gradient2(name = "TRAP\nloading",
+                          labels = c("<-10", -5, 0, 5, ">10"),
+                          low = "#ca562c", mid = "#f6edbd", high = "#3d5941") +
+    theme(legend.position = "bottom",
+          legend.direction = "horizontal",
+          legend.key.height = unit(0.03, "in"),
+          legend.key.width = unit(0.15, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6))
+
+ggsave("panels/1H.png", width = 1.4, height = 1.6, units = "in", dpi = 400)
+```
+
+### Pseudo-TRAP (VMH)
+
+```{r}
+pseudo_trap <- read_csv("../experiments/snRNA-seq/analysis/mouse/pseudo_trap.csv")
+```
+
+```{r}
+# write Supplementary File 2
+pseudo_trap %>%
+  arrange(desc(P < 0.05), desc(Enrichment)) %>%
+  mutate_at(vars(Bead, Sup, Enrichment), ~ round(.x, 2)) %>%
+  mutate("P" = format(P, digits = 2, scientific = TRUE)) %>%
+  write.csv(., "tables/Supplementary File 2_Pseudo-TRAP-VMH.csv", row.names = FALSE, na = "")
+```
+
+```{r}
+common_genes <- intersect(pseudo_trap$Gene, sf1$Gene)
+sf1 <- filter(sf1, Gene %in% common_genes)
+pseudo_trap <- filter(pseudo_trap, Gene %in% common_genes)
+
+sf1_enriched <- filter(sf1, Enrichment > 0 & P < 0.05)$Gene
+pseudo_enriched <- filter(pseudo_trap, Enrichment > 0 & P < 0.05)$Gene
+
+trap_results <- c(
+  "TRAP&pseudo-TRAP" = length(intersect(sf1_enriched, pseudo_enriched)),
+  "TRAP" = length(setdiff(sf1_enriched, pseudo_enriched)),
+  "pseudo-TRAP" = length(setdiff(pseudo_enriched, sf1_enriched))
+)
+
+library(eulerr)
+fit <- euler(trap_results)
+png("panels/1I.png", width = 1.5, height = 1, units = "in", res = 400)
+plot(fit, labels = FALSE)
+dev.off()
+```
+
+```{r}
+common <- intersect(sf1_enriched, pseudo_enriched)
+trap_only <- sf1_enriched[!sf1_enriched %in% pseudo_enriched]
+ptrap_only <- pseudo_enriched[!pseudo_enriched %in% sf1_enriched]
+
+inner_join(pseudo_trap, sf1, by = "Gene") %>%
+  mutate("Class" = case_when(
+    Gene %in% common ~ "Common",
+    Gene %in% trap_only ~ "TRAP",
+    Gene %in% ptrap_only ~ "pseudo-TRAP"
+  )) %>%
+  filter(!is.na(Class)) %>%
+  select(Gene, Class, Bead.x, Bead.y) %>%
+  pivot_longer(starts_with("Bead"), names_to = "Dataset", values_to = "CPM") %>%
+  mutate("Dataset" = factor(Dataset, levels = c("Bead.y", "Bead.x"),
+                            labels = c("TRAP dataset",
+                                       "pseudo-TRAP dataset"))) %>%
+  mutate(Class = factor(Class, levels = c("Common", "TRAP", "pseudo-TRAP"))) %>%
+  ggplot(aes(x = log2(CPM+1), y = fct_rev(Class))) +
+  ggridges::geom_density_ridges(aes(fill = Class), show.legend = FALSE) +
+  scale_fill_manual(values = rcartocolor::carto_pal(3, "Antique")) +
+  geom_vline(aes(xintercept = 0)) +
+  xlab(expression("Bead expression (log"[2]*"CPM)")) +
+  ylab(NULL) +
+  theme_classic() +
+  facet_wrap(~Dataset) +
+  theme(axis.text = element_text(color = "black", size = 7),
+        axis.title = element_text(color = "black", size = 8),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 9))
+
+ggsave("panels/1J.png", width = 3.5, height = 1.9, units = "in", dpi = 400)
+```
+
+```{r}
+neurons <- readRDS("../experiments/snRNA-seq/analysis/mouse/neurons.rds")
+annotation <- read_csv("~/Programs/dropseq3/data/annotation.csv")
+annotation <- filter(annotation, rowSums(annotation[,2:ncol(annotation)]) > 0)
+
+top_genes <- inner_join(pseudo_trap, sf1, by = "Gene") %>%
+  filter(Gene %in% common) %>%
+  filter(Gene %in% annotation$gene) %>%
+  filter(Bead.x > 1 & Bead.y > 1) %>%
+  mutate("Enrichment" = (Enrichment.x+Enrichment.y)/2) %>%
+  select(-starts_with("P")) %>%
+  arrange(desc(Enrichment)) %>%
+  slice(1:15) %>%
+  pull(Gene)
+
+df <- cluster_means(neurons, top_genes) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "z") %>%
+  mutate(gene = factor(gene, levels = top_genes),
+         cluster = factor(cluster, levels = levels(neurons@active.ident))) %>%
+  mutate(z = ifelse(z > 3, 3, ifelse(z < -1, -1, z)))
+p <- ggplot(df, aes(x = cluster, y = fct_rev(gene), fill = z)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                      name = "Mean scaled\nexpression",
+                      breaks = seq(-1, 3),
+                      labels = c("<-1", 0, 1, 2, ">3")) +
+  scale_y_discrete(expand = c(0, 0)) +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        plot.title = element_text(size = 8, hjust = 0.5),
+        axis.text.y = element_text(size = 7, hjust = 1))
+for (i in 1:length(levels(neurons@active.ident))) {
+  p <- p +
+    annotate(
+      "rect",
+      xmin = i-0.5,
+      xmax = i+0.5,
+      ymin = 0.5-length(top_genes)*0.03,
+      ymax = 0.5,
+      fill = neurons@misc$cluster_colors[i],
+      color = "black"
+    )
+}
+
+ggsave("panels/1K.png", p, width = 2.5, height = 1.6, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+# Mouse VMH neurons
+## Figure 2
+
+```{r}
+vmh <- readRDS("../experiments/snRNA-seq/analysis/mouse/vmh.rds")
+
+# reorder colors to match cluster levels
+vmh@misc$cluster_colors <- vmh@misc$cluster_colors[
+  order(factor(names(vmh@misc$cluster_colors), levels = levels(vmh@active.ident)))
+]
+```
+
+```{r}
+DimPlot(vmh, label = TRUE, label.size = 2, pt.size = 0.2) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = vmh@misc$cluster_colors)
+
+ggsave("panels/2A.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.5, fig.height = 2.6}
+table(vmh@active.ident, vmh$Sample) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Freq" = Freq / sum(Freq) * 100) %>%
+  group_by(Var1) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Var1), y = avg, fill = Var1)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = vmh@misc$cluster_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("% cells / dataset") +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 7),
+        axis.title.x = element_text(size = 8)) +
+  coord_flip()
+
+ggsave("panels/2B.png", width = 1.5, height = 2.6, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.7, fig.width = 3.6}
+marker_genes <- filter(vmh@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+df <- vmh@assays$RNA@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = vmh@active.ident,
+    "cell" = names(vmh@active.ident)
+    )) %>%
+  pivot_longer(-c(cluster, cell), names_to = "gene", values_to = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 3),
+                       labels = c("<-1", 0, 1, 2, ">3")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = vmh@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/2C.png", width = 3.6, height = 2.4, units = "in", dpi = 400)
+```
+
+```{r}
+tree <- as.dendrogram(vmh@misc$tree)
+tree <- reorder(tree, 1:24)
+
+ggdendrogram(dendro_data(tree)) + theme_void()
+
+ggsave("panels/2Dtree.png", width = 2.25, height = 1, units = "in", dpi = 400)
+```
+
+```{r}
+class_genes <- c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")
+df <- cluster_means(vmh, class_genes) %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "z") %>%
+  mutate(gene = factor(gene, levels = class_genes),
+         cluster = factor(cluster, levels = levels(vmh@active.ident))) %>%
+  mutate(z = ifelse(z > 0.6, 0.6, z))
+p <- ggplot(df, aes(x = gene, y = fct_rev(cluster), fill = z)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                      name = "Scaled\nexpr.",
+                      breaks = c(-1, 0, 0.6),
+                      labels = c("<-1", 0, ">0.6")) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.06, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        plot.title = element_text(size = 8, hjust = 0.5),
+        axis.text.x = element_text(size = 7, face = "italic", angle = 90,
+                                   hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(size = 7, hjust = 1))
+for (i in 1:length(levels(vmh@active.ident))) {
+  p <- p +
+    annotate(
+      "rect",
+      ymin = length(levels(vmh@active.ident))-i+1.5,
+      ymax = length(levels(vmh@active.ident))-i+0.5,
+      xmin = length(class_genes)+0.5,
+      xmax = (length(class_genes)+0.5)*1.06,
+      fill = vmh@misc$cluster_colors[i],
+      color = "black"
+    )
+}
+
+ggsave("panels/2Dheatmap.png", width = 1.2, height = 2.65, units = "in", dpi = 400)
+```
+
+```{r}
+markers <- cellex(
+  as.data.frame(as.matrix(vmh@assays$RNA@counts)),
+  vmh@active.ident
+)
+marker_genes <- markers %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(cluster = factor(cluster, levels = levels(vmh@active.ident))) %>%
+  arrange(desc(ESmu)) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  slice(1:3) %>%
+  pull(gene)
+
+df <- markers[marker_genes, ] %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(cluster = factor(cluster, levels = levels(vmh@active.ident)),
+         gene = factor(gene, levels = marker_genes))
+
+ggplot(df, aes(x = gene, y = fct_rev(cluster), color = ESmu)) +
+  geom_point() +
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f", name = "ES\u03BC",
+                       breaks = seq(0, 1, by = 0.2)) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6, face = "italic"),
+        axis.text.y = element_text(size = 7, hjust = 1))
+
+ggsave("panels/2E.png", width = 5, height = 3, units = "in", dpi = 400)
+```
+
+```{r}
+# write cluster CELLEX markers
+markers[, levels(vmh@active.ident)] %>%
+  rownames_to_column("Gene") %>%
+  mutate_if(is.numeric, round, 2) %>%
+  write.csv(., "tables/Supplementary File 3_VMH-cluster-markers.csv", row.names = FALSE, na = "")
+```
+
+```{r}
+ggplot(vmh@misc$tree_levels, aes(x = clusters, y = corr)) +
+  geom_hline(aes(yintercept = 0), color = "gray20") +
+  geom_line() +
+  geom_point(aes(color = corr), size = 4, show.legend = FALSE) +
+  geom_text(aes(label = clusters), show.legend = FALSE, size = 2.5) +
+  scale_color_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941") +
+  xlab("Number of clusters") +
+  ylab("Median top correlation") +
+  theme_classic() +
+  theme(axis.text = element_text(color = "black", size = 8),
+        axis.title = element_text(size = 9))
+
+ggsave("panels/2F.png", width = 2.3, height = 2, units = "in", dpi = 400)
+```
+
+```{r}
+table(as.numeric(vmh$neuron_clusters), vmh@active.ident) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Percent" = Freq / sum(Freq) * 100) %>%
+  mutate(Var1 = factor(Var1, levels = c(7, 6, 9, 8, 11, 10))) %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = Percent)) +
+    geom_tile() +
+    scale_fill_gradient(low = "#ede5cf", high = "#541f3f") +
+    xlab("Neuron cluster") +
+    ylab("VMH neuron cluster") +
+    theme_classic() +
+    theme(axis.text.x = element_text(size = 7, hjust = 0.5, color = "black"),
+          axis.text.y = element_text(size = 6, hjust = 1, color = "black"),
+          legend.key.width = unit(0.02, "in"),
+          legend.key.height = unit(0.1, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6),
+          axis.title = element_text(size = 8),
+          axis.line = element_blank(),
+          axis.ticks = element_blank())
+
+ggsave("panels/2G.png", width = 2, height = 2, units = "in", dpi = 400)
+```
+
+```{r}
+classes <- str_extract(vmh@active.ident, "^[:alnum:]+")
+names(classes) <- Cells(vmh)
+class_markers <- cellex(
+  as.data.frame(as.matrix(vmh@assays$RNA@counts)),
+  classes
+)
+
+marker_genes <- class_markers %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(cluster = factor(
+    cluster, levels = c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")
+  )) %>%
+  arrange(desc(ESmu)) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  slice(1:5) %>%
+  pull(gene)
+
+df <- class_markers[marker_genes, ] %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(
+    cluster = factor(
+      cluster, levels = c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")
+    ),
+    gene = factor(gene, levels = marker_genes)
+  )
+
+ggplot(df, aes(x = gene, y = fct_rev(cluster), color = ESmu)) +
+  geom_point() +
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f", name = "ES\u03BC",
+                       breaks = seq(0, 1, by = 0.2)) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6, face = "italic"),
+        axis.text.y = element_text(size = 6, hjust = 1))
+
+ggsave("panels/2H.png", width = 3.2, height = 2.4, units = "in", dpi = 400)
+```
+
+```{r}
+# write class markers
+class_markers[, c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")] %>%
+  rownames_to_column("Gene") %>%
+  mutate_if(is.numeric, round, 2) %>%
+  write.csv(., "tables/Supplementary File 4_VMH-class-markers.csv", row.names = FALSE, na = "")
+```
+
+\pagebreak
+
+## Figure 2--Figure Supplement 1
+Comparison with data from Kim et al.
+
+```{r}
+kim <- readRDS("../experiments/snRNA-seq/analysis/kim/vmh.rds")
+```
+
+```{r, fig.width = 3.5, fig.height = 1.8}
+cowplot::plot_grid(plotlist = list(
+  DimPlot(vmh, label = TRUE, label.size = 2, pt.size = 0.2) +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 8, hjust = 0.5)) +
+    scale_color_manual(values = vmh@misc$cluster_colors) +
+    ggtitle("Affinati et al."),
+  DimPlot(kim, label = TRUE, label.size = 2, pt.size = 0.2) +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 8, hjust = 0.5)) +
+    scale_color_manual(values = kim@misc$cluster_colors) +
+    ggtitle("Kim et al.")
+))
+
+ggsave("panels/2_S1A.png", width = 3.5, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r}
+correlation <- read_csv("../experiments/snRNA-seq/analysis/integration/cluster_correlation.csv")
+
+correlation %>%
+  mutate(Var1 = factor(Var1, levels = levels(vmh@active.ident))) %>%
+  mutate(Var2 = factor(Var2, levels = levels(kim@active.ident))) %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = corr)) +
+  geom_tile() +
+  theme_void() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "\u03C1") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6),
+        axis.text.y = element_text(hjust = 1, size = 6),
+        legend.key.width = unit(0.02, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6))
+
+ggsave("panels/2_S1B.png", width = 2.6, height = 2.9, units = "in", dpi = 400)
+```
+
+```{r, include = FALSE}
+kim_levels <- levels(kim@active.ident)
+kim_colors <- kim@misc$cluster_colors
+rm(kim); gc()
+```
+
+```{r}
+srt <- readRDS("../experiments/snRNA-seq/analysis/integration/vmh.rds")
+```
+
+```{r}
+DimPlot(srt, label = TRUE, label.size = 2.5) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = srt@misc$cluster_colors)
+
+ggsave("panels/2_S1C.png", width = 2.9, height = 2.9, units = "in", dpi = 400)
+```
+
+```{r}
+genes <- c("Dlk1", "Esr1", "Nup62cl", "Satb2", "Nfib", "Foxp2", "Fezf1", "Lepr")
+srt <- scale_data(srt, genes = genes, group = "Sample")
+avg <- cluster_means(srt, genes)
+
+avg %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "z") %>%
+  mutate(gene = factor(gene, levels = genes),
+         cluster = factor(cluster, levels = levels(srt@active.ident))) %>%
+  mutate(z = ifelse(z > 1, 1, z)) %>%
+  ggplot(aes(x = cluster, y = fct_rev(gene), fill = z)) +
+    geom_tile() +
+    theme_void() +
+    scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                         name = "Scaled\nexpr.",
+                         breaks = seq(-0.5, 1, by = 0.5),
+                         labels = c(-0.5, 0, 0.1, ">1")) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     size = 6),
+          axis.text.y = element_text(hjust = 1, size = 6, face = "italic"),
+          legend.key.width = unit(0.02, "in"),
+          legend.key.height = unit(0.1, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6))
+
+ggsave("panels/2_S1D.png", width = 2.9, height = 1.6, units = "in", dpi = 400)
+```
+
+```{r}
+plot_new <- function(dataset, cluster_levels, colors) {
+  cells <- colnames(srt)[srt$Dataset == dataset]
+  df <- data.frame(
+    "UMAP1" = srt@reductions$umap@cell.embeddings[cells, 1],
+    "UMAP2" = srt@reductions$umap@cell.embeddings[cells, 2],
+    "cluster" = srt$original[cells]
+  ) %>%
+    mutate(cluster = factor(cluster, levels = cluster_levels))
+  cluster_labels <- df %>% group_by(cluster) %>%
+    summarize("UMAP1" = median(UMAP1), "UMAP2" = median(UMAP2))
+  p <- ggplot(df, aes(x = UMAP1, y = UMAP2)) +
+    geom_point(aes(color = cluster), show.legend = FALSE, size = 0.2) +
+    scale_color_manual(values = colors) +
+    geom_text(data = cluster_labels, aes(label = cluster), size = 2) +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5, size = 8))
+  return(p)
+}
+
+cowplot::plot_grid(plotlist = list(
+   plot_new("Us", levels(vmh@active.ident), vmh@misc$cluster_colors) +
+     ggtitle("Affinati et al."),
+  plot_new("Kim", kim_levels, kim_colors) +
+     ggtitle("Kim et al.")
+))
+
+ggsave("panels/2_S1E.png", width = 3.5, height = 1.8, units = "in", dpi = 400)
+```
+
+
+```{r, fig.width = 6, fig.height = 5.5}
+cowplot::plot_grid(plotlist = list(
+  data.frame("cluster" = srt@active.ident[srt$Dataset == "Us"],
+             "original" = srt$original[srt$Dataset == "Us"]) %>%
+    mutate(original = fct_explicit_na(original)) %>%
+    mutate(original = factor(original, levels = levels(vmh@active.ident))) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = -n, fill = original)) +
+  geom_col(color = "black") +
+    scale_x_discrete(drop = FALSE) +
+    scale_fill_manual(values = vmh@misc$cluster_colors) +
+  coord_flip() +
+  theme_void() +
+    theme(legend.position = "left",
+          plot.title = element_text(hjust = 0.5, size = 8),
+          legend.key.width = unit(0.05, "in"),
+          legend.key.height = unit(0.05, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_blank()) +
+    guides(fill = guide_legend(ncol = 1)) +
+    ggtitle("Affinati et al."),
+  data.frame("cluster" = srt@active.ident[srt$Dataset == "Kim"],
+             "original" = srt$original[srt$Dataset == "Kim"]) %>%
+    mutate(original = fct_explicit_na(original)) %>%
+    mutate(original = factor(original, levels = kim_levels)) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = n, fill = original)) +
+  geom_col(color = "black") +
+    scale_fill_manual(values = kim_colors) +
+    guides(fill = guide_legend(ncol = 1)) +
+  coord_flip() +
+  theme_void() +
+  theme(axis.text.y = element_text(size = 7),
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5, size = 8),
+        legend.key.height = unit(0.05, "in"),
+        legend.key.width = unit(0.05, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_blank()) +
+    ggtitle("Kim et al.")
+), rel_widths = c(0.45, 0.55))
+
+ggsave("panels/2_S1F.png", width = 3.2, height = 2.7, units = "in", dpi = 400)
+```
+
+```{r, include = FALSE}
+rm(srt, kim_levels, kim_colors); gc()
+```
+
+\pagebreak
+
+## Figure 2--Figure Supplement 2
+Comparison with data from Campbell et al.
+
+```{r}
+arc <- readRDS("../experiments/snRNA-seq/analysis/campbell/vmh.rds")
+```
+
+```{r, fig.width = 3.5, fig.height = 1.8}
+cowplot::plot_grid(plotlist = list(
+  DimPlot(vmh, label = TRUE, label.size = 2, pt.size = 0.2) +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 8, hjust = 0.5)) +
+    scale_color_manual(values = vmh@misc$cluster_colors) +
+    ggtitle("Affinati et al."),
+  DimPlot(arc, label = TRUE, group.by = "Campbell", label.size = 2,
+          pt.size = 0.2) +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 8, hjust = 0.5)) +
+    scale_color_manual(values = c("gray70", "#276C56")) +
+    ggtitle("Campbell et al.")
+))
+
+ggsave("panels/2_S2A.png", width = 3.5, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r}
+correlation <- read_csv("../experiments/snRNA-seq/analysis/campbell/cluster_correlation.csv")
+
+correlation %>%
+  mutate(Var1 = factor(Var1, levels = levels(vmh@active.ident))) %>%
+  mutate(Var2 = str_extract(Var2, "n[0-9]+")) %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = corr)) +
+  geom_tile() +
+  theme_void() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "\u03C1") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7),
+        axis.text.y = element_text(hjust = 1, size = 7),
+        legend.key.width = unit(0.02, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6))
+
+ggsave("panels/2_S2B.png", width = 2.9, height = 1, units = "in", dpi = 400)
+```
+
+```{r}
+mtx <- readRDS("../experiments/snRNA-seq/analysis/campbell/vmh_integrated.rds")
+
+cluster_levels <- c(
+  paste0("Dlk1_", seq(2)),
+  paste0("Esr1_", seq(3)),
+  paste0("Nfib_", seq(3)),
+  paste0("Foxp2_", seq(3)),
+  paste0("Fezf1_", seq(3)),
+  paste0("Lepr_", seq(8))
+)
+
+mtx@misc$cluster_colors <- mtx@misc$cluster_colors[
+  order(factor(names(mtx@misc$cluster_colors), levels = cluster_levels))
+]
+mtx@active.ident <- factor(mtx@active.ident, levels = cluster_levels)
+
+DimPlot(mtx, label = TRUE, pt.size = 0.2, label.size = 2) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = mtx@misc$cluster_colors)
+
+ggsave("panels/2_S2C.png", width = 2.9, height = 2.9, units = "in", dpi = 400)
+```
+
+```{r}
+genes <- c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")
+avg <- cluster_means(mtx, genes)
+
+avg %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "z") %>%
+  mutate(gene = factor(gene, levels = genes),
+         cluster = factor(cluster, levels = levels(mtx@active.ident))) %>%
+  mutate(z = ifelse(z > 1, 1, z)) %>%
+  ggplot(aes(x = cluster, y = fct_rev(gene), fill = z)) +
+    geom_tile() +
+    theme_void() +
+    scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                         name = "Scaled\nexpr.",
+                         breaks = seq(-0.5, 1, by = 0.5),
+                         labels = c(-0.5, 0, 0.1, ">1")) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     size = 6),
+          axis.text.y = element_text(hjust = 1, size = 6, face = "italic"),
+          legend.key.width = unit(0.02, "in"),
+          legend.key.height = unit(0.1, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6))
+
+ggsave("panels/2_S2D.png", width = 2.9, height = 1.6, units = "in", dpi = 400)
+```
+
+```{r s4e}
+dataset_plot <- function(dataset, colors, title) {
+  cells <- Cells(mtx)[mtx$Dataset == dataset]
+  df <- data.frame(
+    "UMAP_1" = mtx@reductions$umap@cell.embeddings[cells, 1],
+    "UMAP_2" = mtx@reductions$umap@cell.embeddings[cells, 2]
+  )
+  if (dataset == "Myers") {
+    df$Cluster <- vmh@active.ident[cells]
+  } else {
+    df$Cluster <- arc@active.ident[cells]
+  }
+  cluster_centers <- df %>% group_by(Cluster) %>%
+    summarize("UMAP_1" = median(UMAP_1), "UMAP_2" = median(UMAP_2))
+  ggplot(df, aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(aes(color = Cluster), size = 0.2) +
+    geom_text(data = cluster_centers, aes(label = Cluster), size = 2) +
+    scale_color_manual(values = colors) +
+    ggtitle(title) +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(size = 8, hjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  dataset_plot("Myers", vmh@misc$cluster_colors, "Affinati et al."),
+  dataset_plot("Campbell", c("gray70", "#276C56"), "Campbell et al.")
+))
+
+ggsave("panels/2_S2E.png", width = 3.5, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r s4f, fig.width = 2.6, fig.height = 2.7}
+original <- c(as.character(vmh@active.ident), as.character(arc@active.ident))
+names(original) <- c(Cells(vmh), Cells(arc))
+mtx$original <- original[match(Cells(mtx), names(original))]
+
+cowplot::plot_grid(plotlist = list(
+  data.frame("cluster" = mtx@active.ident[mtx$Dataset == "Myers"],
+             "original" = mtx$original[mtx$Dataset == "Myers"]) %>%
+    mutate(original = fct_explicit_na(original)) %>%
+    mutate(original = factor(original, levels = levels(vmh@active.ident))) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = -n, fill = original)) +
+    geom_col(color = "black") +
+    scale_x_discrete(drop = FALSE) +
+    scale_fill_manual(values = vmh@misc$cluster_colors) +
+    coord_flip() +
+    theme_void() +
+    theme(legend.position = "left",
+          plot.title = element_text(hjust = 0.5, size = 8),
+          legend.key.width = unit(0.05, "in"),
+          legend.key.height = unit(0.05, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_blank()) +
+    guides(fill = guide_legend(ncol = 1)) +
+    ggtitle("Affinati et al."),
+  data.frame("cluster" = mtx@active.ident[mtx$Dataset == "Campbell"],
+             "original" = mtx$original[mtx$Dataset == "Campbell"]) %>%
+    mutate(original = fct_explicit_na(original)) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = n, fill = original)) +
+    geom_col(color = "black") +
+    scale_x_discrete(drop = FALSE) +
+    scale_fill_manual(values = c("gray70", "#276C56")) +
+    guides(fill = guide_legend(ncol = 1)) +
+    coord_flip() +
+    theme_void() +
+    theme(axis.text.y = element_text(size = 7),
+          legend.position = "right",
+          plot.title = element_text(hjust = 0.5, size = 8),
+          legend.key.height = unit(0.05, "in"),
+          legend.key.width = unit(0.05, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_blank()) +
+    ggtitle("Campbell et al.")
+), rel_widths = c(0.45, 0.55))
+
+ggsave("panels/2_S2F.png", width = 3.2, height = 2.7, units = "in", dpi = 400)
+```
+
+```{r, include = FALSE}
+rm(arc, mtx, avg, genes, correlation); gc()
+```
+
+\pagebreak
+
+## Figure 2--Figure Supplement 4
+*Dlk1* expression across neurons and VMH neurons
+
+```{r}
+# Dlk1 expression outside of the VMH
+neurons <- readRDS("../experiments/snRNA-seq/analysis/mouse/neurons.rds")
+
+plot_dlk1 <- function(dataset) {
+  FeaturePlot(dataset, "Dlk1") +
+    scale_color_gradient(name = expression(italic("Dlk1")),
+                         low = "#ede5cf", high = "#541f3f") +
+    theme_void() +
+    theme(legend.key.width = unit(0.02, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 7),
+          plot.title = element_text(hjust = 0.5, size = 8))
+}
+
+cowplot::plot_grid(
+  plot_dlk1(neurons) + ggtitle("All neurons"),
+  plot_dlk1(vmh) + ggtitle("VMH neurons"),
+  labels = c("A", "B")
+)
+
+ggsave("panels/2_S4.png", width = 7.5, height = 3.5, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 2--Figure Supplement 5
+*Nfib* class marker expression across all cells and VMH neurons
+
+```{r, include = FALSE}
+srt <- readRDS("../experiments/snRNA-seq/analysis/mouse/mouse.rds")
+```
+
+```{r s5a, fig.width = 2.8, fig.height = 2}
+srt@active.ident <- srt$Celltype
+
+celltype_colors <- c(
+  wesanderson::wes_palette("Moonrise1"),
+  wesanderson::wes_palette("Moonrise2"),
+  wesanderson::wes_palette("Moonrise3")
+)
+
+get_luminance <- function(color) {
+  col <- col2rgb(color)
+  0.2126*col["red", ] + 0.7152*col["green", ] + 0.0722*col["blue" ,]
+}
+
+celltype_colors <- celltype_colors[get_luminance(celltype_colors) > 80 &
+                                   get_luminance(celltype_colors) < 220]
+celltype_colors <- celltype_colors[1:length(levels(srt@active.ident))]
+names(celltype_colors) <- levels(srt@active.ident)
+
+
+violin_plot(srt, c("Nfib", "Nfia")) +
+  ylab("Normalized expression") +
+  xlab(NULL) +
+  scale_fill_manual(values = celltype_colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7, color = "black"),
+        axis.text.y = element_text(size = 6, color = "black"),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 8, face = "italic"),
+        axis.title.y = element_text(size = 7))
+
+ggsave("panels/2_S5A.png", width = 2.8, height = 2, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 4, fig.height = 3}
+violin_plot(vmh, c("Nfib", "Nfia", "Slc17a8")) +
+  ylab("Normalized expression") +
+  xlab(NULL) +
+  scale_fill_manual(values = vmh@misc$cluster_colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7, color = "black"),
+        axis.text.y = element_text(size = 6, color = "black"),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 8, face = "italic"),
+        axis.title.y = element_text(size = 7))
+
+ggsave("panels/2_S5B.png", width = 4, height = 2.6, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 2--Figure Supplement 6
+*Foxp2* class marker expression across VMH neurons
+
+```{r, fig.width = 4, fig.height = 3}
+violin_plot(vmh, c("Foxp2", "Cdh7", "Ust")) +
+  ylab("Normalized expression") +
+  xlab(NULL) +
+  scale_fill_manual(values = vmh@misc$cluster_colors) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7, color = "black"),
+        axis.text.y = element_text(size = 6, color = "black"),
+        strip.background = element_blank(),
+        strip.text = element_text(size = 8, face = "italic"),
+        axis.title.y = element_text(size = 7))
+
+ggsave("panels/2_S6B.png", width = 4, height = 2.6, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+# *Lepr* VMH neurons
+## TRAP comparison
+
+```{r}
+trap_dir <- "../experiments/TRAP-seq/"
+hypo <- read_csv(paste0(trap_dir, "Hypo_Lepr/results.csv"))
+dual <- read_csv(paste0(trap_dir, "VMH_Slc17a6+Lepr/results.csv"))
+sf1 <- read_csv(paste0(trap_dir, "VMH_Nr5a1/results.csv"))
+vmh <- read_csv(paste0(trap_dir, "VMH_Lepr/results/enrichment.csv"))
+```
+
+```{r}
+controls <- c("Gfp_L10a", "Cre", "Lepr", "Slc17a6", "Flpo")
+anno <- read_csv("../tools/dropseq3/data/annotation.csv")
+neuropeptides <- filter(anno, neuropeptide == 1)$gene
+```
+
+```{r}
+stick_plot <- function(genes, label_vmh = FALSE) {
+  df <- left_join(hypo, vmh, by = c("gene" = "Gene")) %>%
+    filter(gene %in% genes) %>%
+    select(gene, starts_with("Enrichment")) %>%
+    rename("Hypo" = Enrichment.x, "VMH" = Enrichment.y) %>%
+    left_join(dual, by = c("gene" = "gene_name")) %>%
+    select(-P, -Bead, -Sup, -gene_id) %>%
+    rename("Dual" = Enrichment) %>%
+    pivot_longer(-gene, names_to = "Dataset", values_to = "Enrichment") %>%
+    mutate(Dataset = factor(Dataset,
+                            levels = c("Hypo", "VMH", "Dual"),
+                            labels = c("Hypothalamus\nCre", "VMH\nCre",
+                                       "VMH\nCre+Flp")))
+
+  # some enrichment values are NA, replacing with 0
+  df <- mutate(df, Enrichment = ifelse(is.na(Enrichment), 0, Enrichment))
+
+  # order genes by enrichment in whole hypothalamus
+  gene_levels <- filter(df, Dataset == "Hypothalamus\nCre") %>%
+    arrange(desc(Enrichment)) %>%
+    pull(gene)
+  df <- mutate(df, gene = factor(gene, levels = gene_levels))
+  # plot
+  p <- ggplot(df,
+              aes(x = fct_rev(gene), y = Enrichment, color = Enrichment)) +
+    geom_col(width = 0.01, show.legend = FALSE) +
+    geom_point(show.legend = FALSE) +
+    scale_color_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941") +
+    facet_wrap(~ Dataset, ncol = 3) +
+    ylab(expression("Enrichment (log"[2]*")")) +
+    coord_flip() +
+    theme_void() +
+    theme(axis.text.x = element_text(size = 8),
+          axis.text.y = element_text(size = 9, hjust = 1, face = "italic"),
+          strip.text = element_text(size = 10),
+          axis.title = element_text(size = 9, margin = margin(t = 10)),
+          axis.title.y = element_blank())
+  if (label_vmh) {
+    # if gene is enriched in Sf1, add a dot
+    sf1_genes <- filter(sf1, Enrichment > 0 & P < 0.05)$gene_name
+    label_genes <- intersect(genes, sf1_genes)
+    if (length(label_genes) == 0) {
+      warning("No plotted genes are enriched in SF1 TRAP-seq")
+    } else {
+      xval <- max(df$Enrichment)*1.1
+      for (i in label_genes) {
+        p <- p + annotate("point",
+                          y = xval,
+                          x = length(gene_levels)-which(gene_levels == i)+1,
+                          color = "#541f3f",
+                          shape = 18)
+      }
+      p <- p + scale_y_continuous(limits = c(NA, xval*1.1),
+                                  breaks = seq(0, 5, by = 2))
+    }
+  }
+  return(p)
+}
+```
+
+```{r}
+# find genes enriched in any of the 3 Lepr TRAP datasets
+common_genes <- union(
+  union(
+    filter(hypo, P < 0.05 & Enrichment > 0)$gene,
+    filter(vmh, P < 0.05 & Enrichment > 0)$Gene
+  ),
+  filter(dual, P < 0.05 & Enrichment > 0)$gene_name
+)
+```
+
+```{r, fig.width = 6, fig.height = 5}
+stick_plot(intersect(neuropeptides, common_genes), label_vmh = TRUE)
+```
+
+```{r, fig.width = 6, fig.height = 7}
+fig <- cowplot::plot_grid(plotlist = list(
+  stick_plot(controls) + ylab("") +
+    scale_y_continuous(limits = c(-1.62, 5.65), breaks = seq(0, 5, by = 2)),
+  stick_plot(intersect(neuropeptides, common_genes), label_vmh = TRUE)
+), rel_heights = c(1, 5), ncol = 1, labels = c("A", "B"))
+
+ggsave("panels/3_S1.png", fig, width = 6, height = 7, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 3
+*Lepr* VMH neurons
+
+```{r}
+cpm <- read_csv("../experiments/TRAP-seq/VMH_Slc17a6+Lepr/cpm.csv")
+metadata <- read_csv("../experiments/TRAP-seq/VMH_Slc17a6+Lepr/metadata.csv")
+
+genes <- c("Lepr", "Cre", "Slc17a6", "Flpo", "Gfp_L10a")
+cpm %>%
+  filter(gene %in% genes) %>%
+  pivot_longer(-gene, names_to = "Sample_ID", values_to = "CPM") %>%
+  left_join(metadata, by = "Sample_ID") %>%
+  mutate(gene = factor(gene, levels = genes)) %>%
+  group_by(gene) %>%
+  mutate(CPM = log2(CPM)) %>%
+  mutate("Z" = (CPM-mean(CPM))/sd(CPM)) %>%
+  ggplot(aes(x = Sample_ID, y = fct_rev(gene), fill = Z)) +
+    geom_tile(color = "gray10") +
+    scale_x_discrete(labels = c("Bead 1", "Sup 1", "Bead 2", "Sup 2")) +
+    theme_void() +
+    scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                        name = "Scaled\nCPM",
+                        breaks = c(-1, 0, 1),
+                        labels = c(-1, 0, 1)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6),
+        axis.text.y = element_text(hjust = 1, size = 6, face = "italic"),
+        legend.key.width = unit(0.12, "in"),
+        legend.key.height = unit(0.02, "in"),
+        legend.direction = "horizontal",
+        legend.position = "top",
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6))
+
+ggsave("panels/3B.png", width = 1.5, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r}
+lepr <- read_csv("../experiments/TRAP-seq/VMH_Slc17a6+Lepr/results.csv")
+
+lepr %>%
+  arrange(desc(P < 0.05), desc(Enrichment)) %>%
+  mutate_at(vars(Bead, Sup, Enrichment), ~ round(.x, 2)) %>%
+  mutate("P" = format(P, digits = 2, scientific = TRUE)) %>%
+  write.csv(., "tables/Supplementary File 5_Lepr-TRAP.csv", row.names = FALSE, na = "")
+```
+
+```{r 3c, fig.width = 1.8, fig.height = 1.8}
+ggplot(lepr, aes(x = Bead, y = Enrichment, color = P < 0.05)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_point(alpha = 0.4, stroke = 0) +
+  scale_x_continuous(trans = "log2", limits = c(1, NA), expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_color_manual(values = c("#ede5cf", "#541f3f"), guide = FALSE) +
+  theme_classic() +
+  xlab("Expression (CPM)") +
+  ylab(expression("Enrichment (log"[2]*" Bead/Sup)")) +
+  coord_cartesian(ylim = c(0, NA)) +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        axis.title = element_text(size = 7),
+        axis.text = element_text(color = "black", size = 6)) +
+  annotate("label", x = 2, y = 5.3, hjust = 0,
+           label = expression(italic("P")*" < 0.05"), color = "#541f3f",
+           size = 1.5)
+
+ggsave("panels/3C.png", width = 1.8, height = 1.8, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 4.2, fig.height = 2.2}
+vmh <- readRDS("../experiments/snRNA-seq/analysis/mouse/vmh.rds")
+
+plot_settings <- list(
+  geom_point(stroke = 0, size = 0.6),
+  theme_void(),
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 7))
+)
+cowplot::plot_grid(plotlist = list(
+  data.frame(
+  "UMAP1" = vmh@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = vmh@reductions$umap@cell.embeddings[,2],
+  "score" = vmh@assays$RNA@data["Lepr", ]
+) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = score)) +
+  scale_color_gradient(name = expression(italic("Lepr")),
+                       low = "#ede5cf", high = "#541f3f") +
+  plot_settings,
+  data.frame(
+    "UMAP1" = vmh@reductions$umap@cell.embeddings[,1],
+    "UMAP2" = vmh@reductions$umap@cell.embeddings[,2],
+    "score" = vmh$Lepr
+  ) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = score)) +
+    scale_color_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                          name = "TRAP\nloading") +
+    plot_settings
+))
+
+ggsave("panels/3D.png", width = 3.6, height = 1.9, units = "in", dpi = 400)
+```
+
+```{r}
+# read in Lepr-Vglut2 pseudo-TRAP data
+pseudo_trap <- read_csv("../experiments/snRNA-seq/analysis/mouse/lepr_pseudo_trap.csv")
+```
+
+```{r}
+# write Supplementary File 6: Lepr VMH pseudo TRAP
+pseudo_trap %>%
+  arrange(desc(P < 0.05), desc(Enrichment)) %>%
+  mutate_at(vars(Bead, Sup, Enrichment), ~ round(.x, 2)) %>%
+  mutate("P" = format(P, digits = 2, scientific = TRUE)) %>%
+  write.csv(., "tables/Supplementary File 6_Pseudo-TRAP-Lepr.csv", row.names = FALSE, na = "")
+```
+
+
+```{r}
+# compare TRAP and pseudo-TRAP genes across clusters
+# read in annotation for gene filtering
+annotation <- read_csv("../tools/dropseq3/data/annotation.csv")
+annotation <- filter(annotation, rowSums(annotation[,2:ncol(annotation)]) > 0)
+
+# get genes enriched in both TRAP and pseudo-TRAP
+top_genes <- inner_join(pseudo_trap, lepr, by = "Gene") %>%
+  filter(Gene %in% common) %>%
+  filter(Gene %in% annotation$gene) %>%
+  filter(Bead.x > 1 & Bead.y > 1) %>%
+  mutate("Enrichment" = (Enrichment.x+Enrichment.y)/2) %>%
+  select(-starts_with("P")) %>%
+  arrange(desc(Enrichment)) %>%
+  slice(1:25) %>%
+  pull(Gene)
+top_genes <- union("Lepr", top_genes)
+
+# plot across classes
+df <- vmh[["RNA"]]@scale.data[top_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>% as.data.frame()
+df$Class <- str_extract(vmh@active.ident, ".+(?=_)")
+df <- pivot_longer(df, -Class, names_to = "Gene", values_to = "z") %>%
+  mutate(Gene = factor(Gene, levels = top_genes),
+         Class = factor(Class, levels = c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")))
+grouped <- df %>% group_by(Class, Gene) %>% summarize("avg" = mean(z)) %>%
+  mutate(avg = ifelse(avg > 3, 3, ifelse(avg < -1, -1, avg)))
+ggplot(grouped, aes(x = Class, y = fct_rev(Gene), fill = avg)) +
+  geom_tile() +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                      name = "z-score") +
+  annotate("rect", xmin = 5.5, xmax = 6.5, ymin = 0.5,
+           ymax = length(top_genes) + 0.5, fill = NA, color = "gray20") +
+  scale_y_discrete(expand = c(0, 0)) +
+  theme_void() +
+  theme(legend.position = "top",
+  legend.direction = "horizontal",
+  legend.key.height = unit(0.03, "in"),
+  legend.key.width = unit(0.1, "in"),
+  legend.text = element_text(size = 6),
+  legend.title = element_text(size = 6),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.title = element_text(size = 8, hjust = 0.5),
+  axis.text.x = element_text(size = 7, angle = 90, hjust = 1, vjust = 0.5),
+  axis.text.y = element_text(size = 7, hjust = 1, face = "italic"))
+ggsave("panels/3F-left.png", width = 1.4, height = 2.4, units = "in", dpi = 400)
+
+# plot across Lepr subclusters
+df <- vmh[["RNA"]]@scale.data[top_genes, ] %>% Matrix::t() %>%
+  as.matrix() %>% as.data.frame()
+df$Cluster <- vmh@active.ident
+df <- filter(df, str_detect(Cluster, "Lepr"))
+
+df <- pivot_longer(df, -Cluster, names_to = "Gene", values_to = "z") %>%
+  mutate(Gene = factor(Gene, levels = top_genes))
+grouped <- df %>% group_by(Cluster, Gene) %>% summarize("avg" = mean(z)) %>%
+  mutate(avg = ifelse(avg > 3, 3, ifelse(avg < -1, -1, avg)))
+ggplot(grouped, aes(x = Cluster, y = fct_rev(Gene), fill = avg)) +
+  geom_tile() +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                      name = NULL) +
+  scale_y_discrete(expand = c(0, 0)) +
+  theme_void() +
+  theme(legend.position = "top",
+  legend.direction = "horizontal",
+  legend.key.height = unit(0.03, "in"),
+  legend.text = element_text(size = 6),
+  legend.title = element_text(size = 6),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.title = element_text(size = 8, hjust = 0.5),
+  axis.text.x = element_text(size = 7, angle = 90, hjust = 1, vjust = 0.5),
+  axis.text.y = element_blank())
+ggsave("panels/3F-center.png", width = 1.8, height = 2.44, units = "in", dpi = 400)
+```
+
+```{r}
+lepr %>%
+  filter(Gene %in% top_genes) %>%
+  mutate(Gene = factor(Gene, levels = top_genes)) %>%
+  ggplot(aes(x = "TRAP\nenrichment", y = fct_rev(Gene), fill = Enrichment)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                        name = "\n\n",
+                        breaks = seq(-1, 3),
+                        labels = c("<-1", 0, 1, 2, ">3")) +
+    scale_x_discrete(expand = c(0, 0)) +
+    theme_void() +
+    theme(legend.position = "top",
+          legend.direction = "horizontal",
+          legend.key.height = unit(0.03, "in"),
+          legend.key.width = unit(0.05, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6),
+          panel.border = element_rect(fill = NA, color = "black"),
+          plot.title = element_text(size = 8, hjust = 0.5),
+          axis.text.x = element_text(size = 7, angle = 90, hjust = 1, vjust = 0.5),
+          axis.text.y = element_blank())
+
+ggsave("panels/3F-right.png", width = 0.2, height = 2.7, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 4--Figure Supplement 1
+Macaque snRNA-seq analysis
+
+```{r, include = FALSE}
+rm(vmh, lepr); gc()
+```
+
+```{r}
+srt <- readRDS("../experiments/snRNA-seq/analysis/macaque/macaque.rds")
+srt$Sample <- factor(
+  srt$Sample,
+  levels = unique(srt$Sample),
+  labels = paste0("Sample_", LETTERS[1:length(unique(srt$Sample))])
+)
+```
+
+```{r}
+fig_cells <- table(srt$Sample) %>%
+  as.data.frame() %>%
+  filter(Freq != 0) %>%
+  rename("Sample" = Var1) %>%
+  select(-starts_with("Var")) %>%
+  ggplot(aes(x = Sample, y = Freq, fill = Sample)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = unname(srt@misc$sample_colors)) +
+  ggtitle("Cells") +
+  theme_void() +
+  theme(axis.text.x = element_text(color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(color = "black", size = 7),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.key.width = unit(0.1, "in"),
+        legend.key.height = unit(0.05, "in"))
+
+plot_metadata <- function(measure, title = NULL) {
+  data.frame(
+    "metadata" = srt@meta.data[, measure],
+    "Sample" = srt$Sample
+    ) %>%
+    ggplot(aes(x = Sample, y = metadata, fill = Sample)) +
+    geom_violin(show.legend = FALSE) +
+    scale_fill_manual(values = unname(srt@misc$sample_colors)) +
+    scale_y_continuous(trans = "log2") +
+    ggtitle(title) +
+    theme_void() +
+  theme(axis.text.x = element_text(color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5, size = 8),
+        axis.text.y = element_text(color = "black", size = 7),
+        strip.text = element_text(size = 10),
+        legend.title = element_text(size = 9),
+        legend.key.height = unit(0.02, "in"),
+        legend.key.width = unit(0.08, "in"),
+        plot.title = element_text(hjust = 0.5, size = 10))
+}
+
+fig_genes <- plot_metadata("nFeature_RNA", "Genes")
+fig_umis <- plot_metadata("nCount_RNA", "UMIs")
+
+cowplot::plot_grid(fig_cells, fig_genes, fig_umis, ncol = 3)
+
+ggsave("panels/4_S1A.png", width = 4.5, height = 2, units = "in", dpi = 400)
+```
+
+```{r}
+DimPlot(srt, group.by = "Sample", cells = sample(Cells(srt))) +
+  theme_void() +
+  scale_color_manual(values = unname(srt@misc$sample_colors)) +
+  theme(legend.text = element_text(size = 6))
+
+ggsave("panels/4_S1D.png", width = 3, height = 2, units = "in", dpi = 400)
+```
+
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+DimPlot(srt, label = TRUE, label.size = 2) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = srt@misc$cluster_colors)
+
+ggsave("panels/4_S1E.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.3, fig.height = 2.7}
+table(srt@active.ident, srt$Sample) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Freq" = Freq / sum(Freq) * 100) %>%
+  group_by(Var1) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Var1), y = avg, fill = Var1)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = srt@misc$cluster_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("% cells / dataset") +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 7),
+        axis.title.x = element_text(size = 8)) +
+  coord_flip()
+
+ggsave("panels/4_S1F.png", width = 1.3, height = 2.6, units = "in", dpi = 400)
+```
+
+```{r}
+violin_plot(srt, c("AGT", "TSHR", "SYP", "VCAN", "MOG", "CLDN5", "CX3CR1"),
+            stacked = TRUE) +
+  scale_fill_manual(values = srt@misc$cluster_colors) +
+  xlab(NULL) +
+  theme(axis.text.x = element_text(size = 7, color = "black", angle = 0,
+                                   hjust = 0.5, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank())
+
+ggsave("panels/4_S1G.png", width = 3.2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.7, fig.width = 3.6}
+srt@misc$markers <- FindAllMarkers(srt, only.pos = TRUE)
+
+marker_genes <-
+  filter(srt@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+srt <- scale_data(srt, genes = marker_genes, groups = "Sample")
+df <- srt@assays$RNA@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = srt@active.ident),
+    "cell" = names(srt@active.ident)
+    ) %>%
+  gather(-cluster, -cell, key = "gene", value = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 3),
+                       labels = c("<0", 0, 1, 2, ">3")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = srt@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/4_S1H.png", width = 3.2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+DimPlot(srt, group.by = "Celltype", label = TRUE, label.size = 2) +
+  scale_color_manual(values = srt@misc$celltype_colors) +
+  theme_void() +
+  theme(legend.position = "none")
+
+ggsave("panels/4_S1I.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 1.3, fig.height = 2.7}
+table(srt$Celltype, srt$Sample) %>%
+  as.data.frame() %>%
+  group_by(Var2) %>%
+  mutate("Freq" = Freq / sum(Freq) * 100) %>%
+  group_by(Var1) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Var1), y = avg, fill = Var1)) +
+  geom_col(color = "black", show.legend = FALSE) +
+  scale_fill_manual(values = srt@misc$celltype_colors) +
+  scale_y_continuous(expand = c(0, 0)) +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4) +
+  theme_classic() +
+  xlab(NULL) +
+  ylab("% cells / dataset") +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 7),
+        axis.title.x = element_text(size = 8)) +
+  coord_flip()
+
+ggsave("panels/4_S1J.png", width = 1.5, height = 2.6, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 4--Figure Supplement 2
+Macaque neurons
+
+```{r, include = FALSE}
+rm(srt, fig_cells, fig_umis, fig_genes, marker_genes, p)
+neurons <- readRDS("../experiments/snRNA-seq/analysis/macaque/neurons.rds")
+gc()
+```
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+dim_plot(neurons, label_size = 2, point_size = 0.6) +
+  scale_color_manual(values = neurons@misc$cluster_colors)
+
+ggsave("panels/4_S2A.png", width = 2.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.6, fig.width = 2.5}
+neurons@misc$markers <- FindAllMarkers(neurons, only.pos = TRUE)
+marker_genes <- filter(neurons@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+neurons <- scale_data(neurons, group = "Sample")
+df <- neurons@assays$RNA@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = neurons@active.ident,
+    "cell" = names(neurons@active.ident)
+    )) %>%
+  pivot_longer(-c(cluster, cell), names_to = "gene", values_to = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 3),
+                       labels = c("<0", 0, 1, 2, ">3")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = neurons@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/4_S2B.png", width = 2.5, height = 2.6, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 3.4, fig.height = 1.9}
+data.frame(
+  "cell" = colnames(neurons),
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[,2],
+  "NR5A1" = neurons@assays$RNA@data["NR5A1", ],
+  "FEZF1" = neurons@assays$RNA@data["FEZF1", ]
+) %>%
+  pivot_longer(-c(cell, UMAP1, UMAP2), names_to = "gene", values_to = "expr") %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = expr)) +
+  geom_point(stroke = 0, size = 0.4) +
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f",
+                       name = "Normalized\nexpression") +
+  theme_void() +
+  facet_wrap(~gene) +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.title = element_text(size = 6),
+        legend.text = element_text(size = 6),
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.15, "in"),
+        strip.text = element_text(face = "italic", size = 8))
+
+ggsave("panels/4_S2C.png", width = 3.4, height = 1.9, units = "in", dpi = 400)
+```
+
+```{r}
+data.frame(
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[,2],
+  "Sf1" = neurons$Sf1
+) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = Sf1)) +
+  geom_point(stroke = 0, size = 0.4) +
+  scale_color_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                        name = "TRAP\nloading") +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.title = element_text(size = 6),
+        legend.text = element_text(size = 6),
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.15, "in"),
+        strip.text = element_text(face = "italic", size = 8))
+
+ggsave("panels/4_S2E.png", width = 1.7, height = 1.8, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 4
+Macaque VMH neurons
+
+```{r, include = FALSE}
+rm(neurons, marker_genes, df, p, cluster_table)
+vmh <- readRDS("../experiments/snRNA-seq/analysis/macaque/vmh.rds")
+gc()
+```
+
+```{r}
+# I accidentally labeled "FOXP2" as "FOXP2_2"
+vmh@active.ident <- recode(vmh@active.ident, "FOXP2_2" = "FOXP2")
+colnames(vmh@misc$cellex)[colnames(vmh@misc$cellex) == "FOXP2_2"] <- "FOXP2"
+names(vmh@misc$cluster_colors)[names(vmh@misc$cluster_colors) == "FOXP2_2"] <- "FOXP2"
+```
+
+```{r}
+DimPlot(vmh, label = TRUE, label.size = 2.5, pt.size = 0.4) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = vmh@misc$cluster_colors)
+
+ggsave("panels/4B.png", width = 2.1, height = 2.1, units = "in", dpi = 400)
+```
+
+```{r, fig.height = 2.1, fig.width = 2}
+if (!"markers" %in% names(vmh@misc)) {
+  vmh@misc$markers <- FindAllMarkers(vmh, only.pos = TRUE)
+  saveRDS(vmh, "../experiments/snRNA-seq/analysis/macaque/vmh.rds")
+}
+
+marker_genes <- filter(vmh@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+df <- vmh[["RNA"]]@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = vmh@active.ident,
+    "cell" = names(vmh@active.ident)
+    )) %>%
+  pivot_longer(-c(cluster, cell), names_to = "gene", values_to = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 3, 3, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 3),
+                       labels = c("<0", 0, 1, 2, ">3")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = vmh@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/4C.png", width = 2, height = 2.1, units = "in", dpi = 400)
+```
+
+```{r, fig.width = 2, fig.height = 2.5}
+genes <- c("QRFPR", "ESR1", "NFIB", "FOXP2", "LEPR")
+violin_plot(vmh, genes, stacked = TRUE) +
+  scale_fill_manual(values = vmh@misc$cluster_colors) +
+  xlab(NULL) +
+  theme(axis.text.x = element_text(size = 7, color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank())
+
+ggsave("panels/4D.png", width = 2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r}
+marker_genes <- vmh@misc$cellex %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(cluster = factor(cluster, levels = levels(vmh@active.ident))) %>%
+  arrange(desc(ESmu)) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  slice(1:8) %>%
+  pull(gene)
+
+df <- vmh@misc$cellex[marker_genes, ] %>%
+  rownames_to_column("gene") %>%
+  pivot_longer(-gene, names_to = "cluster", values_to = "ESmu") %>%
+  mutate(cluster = factor(cluster, levels = levels(vmh@active.ident)),
+         gene = factor(gene, levels = marker_genes))
+
+ggplot(df, aes(x = gene, y = fct_rev(cluster), color = ESmu)) +
+  geom_point() +
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f", name = "ES\u03BC",
+                       breaks = seq(0, 1, by = 0.2)) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6, face = "italic"),
+        axis.text.y = element_text(size = 7, hjust = 1))
+
+ggsave("panels/4E.png", width = 4.8, height = 2.1, units = "in", dpi = 400)
+```
+
+```{r}
+# write cluster CELLEX markers
+vmh@misc$cellex[, levels(vmh@active.ident)] %>%
+  rownames_to_column("Gene") %>%
+  mutate_if(is.numeric, round, 2) %>%
+  write.csv(., "tables/Supplementary File 7_macaque-cluster-markers.csv", row.names = FALSE, na = "")
+```
+
+```{r}
+correlation <- read_csv("../experiments/snRNA-seq/analysis/macaque/cluster_correlation.csv")
+
+# goofed with FOXP2
+correlation$Var2 <- recode(correlation$Var2, "FOXP2_2" = "FOXP2")
+
+correlation %>%
+  mutate(Var1 = factor(Var1, levels = unique(Var1)),
+         Var2 = factor(Var2, levels = unique(Var2))) %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = corr)) +
+  geom_tile() +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Pearson's r") +
+  theme_void() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+        axis.text.y = element_text(size = 7, hjust = 1))
+
+ggsave("panels/4F.png", width = 2.5, height = 1.5, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+## Figure 5--Figure Supplement 1
+
+```{r}
+labels <- readRDS("../experiments/snRNA-seq/analysis/conservation/transfer_labels.rds")
+
+labels$nhp$predicted.id <- recode(labels$nhp$predicted.id, "FOXP2_2" = "FOXP2")
+labels$mouse$Cluster <- recode(labels$mouse$Cluster, "FOXP2_2" = "FOXP2")
+
+plot_settings <- list(
+  geom_point(aes(color = score, size = total)),
+  theme_void(),
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f",
+                       name = "Transfer\nscore"),
+  scale_size_area(name = "Cells"),
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7),
+        axis.text.y = element_text(hjust = 1, size = 7),
+        plot.title = element_text(size = 8, hjust = 0.5),
+        legend.key.width = unit(0.02, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6)),
+  guides(size = guide_legend(order = 2))
+)
+
+cowplot::plot_grid(plotlist = list(
+  labels$nhp %>%
+    group_by(Cluster, predicted.id) %>%
+    summarize("score" = median(prediction.score.max),
+              "total" = n()) %>%
+    ggplot(aes(x = Cluster, y = fct_rev(predicted.id))) +
+      plot_settings +
+      ggtitle("Mouse to Macaque projection"),
+  labels$mouse %>%
+    group_by(Cluster, predicted.id) %>%
+    summarize("score" = median(prediction.score.max),
+              "total" = n()) %>%
+    ggplot(aes(x = predicted.id, y = fct_rev(Cluster))) +
+      plot_settings +
+      ggtitle("Macaque to Mouse projection")
+))
+
+ggsave("panels/5_S1A.png", width = 7.5, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r}
+# correlation with mouse classes
+macaque <- readRDS("../experiments/snRNA-seq/analysis/macaque/vmh.rds")
+vmh <- readRDS("../experiments/snRNA-seq/analysis/mouse/vmh.rds")
+
+mouse_genes <- rownames(vmh@misc$cellex)
+macaque_genes <- rownames(macaque@misc$cellex)
+orthologs <- read_tsv("../experiments/snRNA-seq/data/mouse_to_macaque.tsv.gz")
+macaque_genes <- orthologs$`Gene name`[match(macaque_genes, orthologs$`Gene name_1`)]
+var_genes <- union(mouse_genes, macaque_genes)
+
+macaque_mtx <- macaque[["RNA"]]@scale.data
+mouse_mtx <- vmh[["RNA"]]@scale.data
+
+rownames(macaque_mtx) <- orthologs$`Gene name`[
+  match(rownames(macaque_mtx), orthologs$`Gene name_1`)
+]
+
+# keep genes in rownames
+var_genes <- var_genes[var_genes %in% rownames(macaque_mtx)]
+var_genes <- var_genes[var_genes %in% rownames(mouse_mtx)]
+
+# Remove var genes with NA scale data
+var_genes <- var_genes[!apply(macaque_mtx[var_genes, ], 1, function(x) any(is.na(x)))]
+var_genes <- var_genes[!apply(mouse_mtx[var_genes, ], 1, function(x) any(is.na(x)))]
+
+
+correlation <- expand.grid(
+  unique(str_extract(vmh@active.ident, "^[:alnum:]+")),
+  unique(str_extract(macaque@active.ident, "^[:alnum:]+"))
+)
+correlation$corr <- apply(correlation, 1, function(x) {
+  cor(
+    rowMeans(mouse_mtx[var_genes, str_detect(vmh@active.ident, x["Var1"])]),
+    rowMeans(macaque_mtx[var_genes, str_detect(macaque@active.ident, x["Var2"])])
+    )
+})
+
+# relevel
+correlation <- correlation %>% mutate(
+  Var1 = factor(Var1, levels = c("Dlk1", "Esr1", "Nfib", "Foxp2", "Fezf1", "Lepr")),
+  Var2 = factor(Var2, levels = c("QRFPR", "ESR1", "NFIB", "FOXP2", "LEPR"))
+)
+
+# plot
+correlation %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = corr)) +
+  geom_tile() +
+  theme_void() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "\u03C1") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7),
+        axis.text.y = element_text(hjust = 1, size = 7),
+        legend.key.width = unit(0.02, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6))
+
+ggsave("panels/5_S1D.png", width = 1.4, height = 1, units = "in", dpi = 400)
+```
+
+\pagebreak
+
+# Figure 5
+Conserved mouse and macaque analysis
+
+```{r, include = FALSE}
+rm(vmh, macaque); gc()
+srt <- readRDS("../experiments/snRNA-seq/analysis/conservation/vmh.rds")
+species_colors <- c(srt@misc$species_colors[1], "#0B775E")
+```
+
+```{r, fig.width = 2.2, fig.height = 2.5}
+DimPlot(srt, group.by = "Species", cells = sample(Cells(srt))) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 7),
+        legend.title = element_blank()) +
+  scale_color_manual(values = species_colors)
+
+ggsave("panels/5B.png", width = 2.2, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r}
+DimPlot(srt, label = TRUE, label.size = 2) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = srt@misc$cluster_colors)
+
+ggsave("panels/5C.png", width = 2.2, height = 2.2, units = "in", dpi = 400)
+```
+
+```{r}
+genes <- c("Esr1", "Dlk1", "Qrfpr", "Fezf1", "Lepr", "Nfib", "Foxp2")
+df <- expand.grid(levels(srt@active.ident), unique(srt$Species))
+expr <- apply(df, 1, function(x) {
+  cells = Cells(srt)[srt@active.ident == x["Var1"] & srt$Species == x["Var2"]]
+  rowMeans(srt[["RNA"]]@scale.data[genes, cells])
+})
+colnames(expr) <- paste(df$Var1, df$Var2)
+
+# reshape for plotting
+expr <- rownames_to_column(as.data.frame(expr), "gene") %>%
+  mutate(gene = factor(gene, levels = genes)) %>%
+  pivot_longer(-gene, names_to = "group", values_to = "z") %>%
+  separate(group, into = c("cluster", "species"), sep = " ") %>%
+  mutate(cluster = factor(cluster, levels = levels(srt@active.ident)))
+
+expr$z <- ifelse(expr$z > 2, 2, expr$z)
+
+ggplot(expr, aes(x = cluster, y = fct_rev(gene), fill = z)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpr.",
+                       breaks = seq(-1, 2),
+                       labels = c(seq(-1, 1), ">2")) +
+  facet_wrap(~species, ncol = 1) +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7),
+        axis.text.y = element_text(face = "italic", size = 7, hjust = 1),
+        legend.position = "top",
+        legend.direction = "horizontal",
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        strip.text = element_text(size = 8),
+        legend.key.height = unit(0.02, "in"),
+        legend.key.width = unit(0.1, "in"))
+
+ggsave("panels/5D.png", width = 1.8, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r}
+mouse_samples <- unique(srt$Sample[srt$Species == "Mouse"])
+macaque_samples <- unique(srt$Sample[srt$Species == "Macaque"])
+df <- table(srt@active.ident, srt$Sample, srt$Species) %>%
+  as.data.frame() %>%
+  filter((Var2 %in% mouse_samples & Var3 == "Mouse") |
+         (Var2 %in% macaque_samples & Var3 == "Macaque")) %>%
+  group_by(Var2) %>%
+  mutate("Percent" = Freq / sum(Freq) * 100) %>%
+  mutate(Var1 = factor(Var1, levels = levels(srt@active.ident))) %>%
+  group_by(Var1, Var3) %>%
+  summarize("avg" = mean(Percent), "sem" = sd(Percent)/sqrt(n()))
+
+ggplot(df, aes(x = avg, y = fct_rev(Var1))) +
+  geom_col(aes(fill = Var3), position = "dodge", color = "black") +
+  geom_errorbarh(aes(xmin = avg - sem, xmax= avg + sem, group = Var3),
+                 width = 0.4,
+                 position = position_dodge(width = 0.9)) +
+  scale_fill_manual(values = species_colors, name = NULL) +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.05))) +
+  xlab("% of cells") +
+  ylab(NULL) +
+  theme_classic() +
+  theme(legend.position = c(0.8, 0.75),
+        axis.text.x = element_text(color = "black", size = 6),
+        axis.title.x = element_text(size = 7),
+        axis.text.y = element_text(size = 7, color = "black"),
+        legend.key.width = unit(0.05, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.background = element_blank())
+
+ggsave("panels/5E.png", width = 1.6, height = 2.5, units = "in", dpi = 400)
+```
+
+```{r 5f, fig.height = 2.7, fig.width = 3.6}
+marker_genes <-
+  filter(srt@misc$markers, p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  pull(gene)
+df <- srt[["RNA"]]@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = srt@active.ident),
+    "cell" = names(srt@active.ident)
+    ) %>%
+  pivot_longer(-c(cluster, cell), names_to = "gene", values_to = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster, cell) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 2, 2, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#ca562c", mid = "#f6edbd", high = "#3d5941",
+                       name = "Scaled\nexpression",
+                       breaks = seq(-1, 2),
+                       labels = c("<-1", 0, 1, ">2")) +
+  theme_void() +
+  theme(legend.position = "top",
+        legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = srt@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+ggsave("panels/5F.png", width = 3.2, height = 2.3, units = "in", dpi = 400)
+```
+
+```{r, include = FALSE}
+mouse <- readRDS("../experiments/snRNA-seq/analysis/mouse/vmh.rds")
+mouse_colors <- mouse@misc$cluster_colors
+mouse_levels <- levels(mouse@active.ident)
+rm(mouse)
+nhp <- readRDS("../experiments/snRNA-seq/analysis/macaque/vmh.rds")
+nhp_colors <- nhp@misc$cluster_colors
+nhp_levels <- levels(nhp@active.ident)
+names(nhp_colors)[names(nhp_colors) == "FOXP2_2"] <- "FOXP2"
+rm(nhp)
+gc()
+```
+
+```{r}
+cowplot::plot_grid(plotlist = list(
+  data.frame(
+    "cluster" = srt@active.ident[srt$Species == "Mouse"],
+    "original" = srt$Cluster[srt$Species == "Mouse"]
+  ) %>%
+  mutate(original = factor(original, levels = mouse_levels)) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = -n, fill = original)) +
+    geom_col(color = "black") +
+    scale_fill_manual(values = mouse_colors, name = NULL) +
+    coord_flip() +
+    theme_void() +
+    theme(legend.position = "left",
+          plot.title = element_text(hjust = 0.5, size = 8),
+          legend.key.height = unit(0.08, "in"),
+          legend.key.width = unit(0.05, "in"),
+          legend.text = element_text(size = 5),
+          legend.title = element_text(size = 6)) +
+    guides(fill = guide_legend(ncol = 1)) +
+    ggtitle("Mouse"),
+  data.frame("cluster" = srt@active.ident[srt$Species == "Macaque"],
+             "original" = srt$Cluster[srt$Species == "Macaque"]) %>%
+    mutate(original = factor(
+      original, levels = nhp_levels,
+      labels = c("QRFPR", "ESR1_1", "ESR1_2",
+                 "NFIB_1", "NFIB_2", "FOXP2", "LEPR")
+    )) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = n, fill = original)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = nhp_colors, name = NULL) +
+    guides(fill = guide_legend(ncol = 1)) +
+  coord_flip() +
+  theme_void() +
+  theme(axis.text.y = element_text(size = 7),
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5, size = 8),
+        legend.key.height = unit(0.1, "in"),
+        legend.key.width = unit(0.05, "in"),
+        legend.text = element_text(size = 5),
+        legend.title = element_text(size = 6)) +
+    ggtitle("Macaque")
+), rel_widths = c(0.42, 0.58))
+
+ggsave("panels/5G.png", width = 2.4, height = 2.2, units = "in", dpi = 400)
+```
+
+```{r}
+plot_settings <- list(
+  theme(panel.background = element_rect(fill = "black"),
+        plot.margin = margin(3, 0, 0, 0))
+)
+cowplot::plot_grid(
+  rgb_plot(vmh, red = "ACVR1C", green = "LEPR") + plot_settings,
+  rgb_plot(vmh, red = "SLC17A8", green = "LEPR") + plot_settings,
+  ncol = 1
+)
+
+ggsave("panels/5_S2B.png", width = 1.44, height = 2.9, units = "in", dpi = 400)
+```
+
+```{r}
+filter(srt@misc$cellex_combined, Macaque > 0.5 | Mouse > 0.5) %>%
+  group_by(cluster, Group) %>%
+  count() %>%
+  mutate(Group = factor(Group, levels = c("Mouse", "Both", "NHP"),
+                        labels = c("Mouse", "Common", "Macaque"))) %>%
+  ggplot(aes(x = cluster, y = n, fill = Group)) +
+    geom_col(position = "dodge", color = "black") +
+    scale_y_continuous(expand = c(0, 0)) +
+    ylab("High confidence\nmarker genes") +
+    xlab(NULL) +
+    scale_fill_manual(values = c(species_colors[2], "#fbe6c5", species_colors[1]),
+                      name = NULL) +
+    theme_classic() +
+    theme(axis.text.x = element_text(size = 8, color = "black", angle = 90,
+                                     hjust = 1, vjust = 0.5),
+          axis.text.y = element_text(size = 7, color = "black"),
+          axis.title.y = element_text(size = 8),
+          legend.key.width = unit(0.05, "in"),
+          legend.key.height = unit(0.1, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 7),
+          legend.direction = "horizontal",
+          legend.position = c(0.8, 0.8))
+
+ggsave("panels/5_S1B.png", width = 7.5, height = 2, units = "in", dpi = 400)
+```
+
+```{r}
+# getting the top genes by average ESmu for each cluster
+anno <- read_csv("~/Programs/dropseq3/data/annotation.csv")
+anno <- filter(anno, rowSums(anno[,2:ncol(anno)]) > 0)
+
+top_genes <- srt@misc$cellex_combined %>%
+  filter(gene %in% anno$gene) %>%
+  arrange(desc(Average)) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  slice(1:3) %>%
+  pull(gene)
+
+draw_gradient <- function(palette) {
+  title <- str_to_title(str_extract(deparse(substitute(palette)), "^[:alnum:]+"))
+  title <- paste(title, "ES\u03BC")
+  ggplot(data.frame("x" = seq(length(palette)),
+                    color = factor(palette, levels = palette)),
+         aes(x = x, y = 1, fill = color)) +
+    geom_tile(show.legend = FALSE) +
+    scale_fill_manual(values = palette) +
+    theme_void() +
+    ggtitle(title) +
+    scale_x_continuous(breaks = seq(0, 100, by = 25),
+                       labels = seq(0, 1, by = 0.25)) +
+    theme(axis.text.x = element_text(size = 6),
+          plot.title = element_text(hjust = 0.5, size = 6))
+}
+
+plot_cellex <- function(genes, rel_heights = c(0.1, 1)) {
+  # set up data.frame
+  df <- select(srt@misc$cellex_combined, gene, cluster, Macaque, Mouse) %>%
+    filter(gene %in% genes) %>%
+    pivot_longer(c(Macaque, Mouse), names_to = "Species", values_to = "ESmu") %>%
+    mutate(Species = factor(Species, levels = c("Mouse", "Macaque")),
+           gene = factor(gene, levels = genes)) %>%
+    mutate(x = as.numeric(gene) + (as.numeric(Species)-1.5)*0.5)
+
+  # assign colors to each dot by species and ESmu value
+  df$Color <- paste(df$Species, round(df$ESmu*100, 0))
+  macaque_palette <- colorRampPalette(c("#fbe6c5", "#672044"))(100)
+  mouse_palette <- colorRampPalette(c("#f6edbd", "#3d5941"))(100)
+  palette <- c(macaque_palette, mouse_palette)
+  names(palette) <- c(paste("Macaque", seq(100)), paste("Mouse", seq(100)))
+  # add 0 values
+  palette["Macaque 0"] <- macaque_palette[1]
+  palette["Mouse 0"] <- mouse_palette[1]
+
+  p <- ggplot(df, aes(x = x, y = fct_rev(cluster), color = Color)) +
+    geom_point(show.legend = FALSE, stroke = 0, size = 1.7) +
+    scale_color_manual(values = palette) +
+    theme_void() +
+    scale_x_continuous(labels = genes,
+                       breaks = seq(length(genes)),
+                       limits = c(0, length(genes) + 1),
+                       expand = c(0, 0)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     size = 7, face = "italic"),
+          axis.text.y = element_text(hjust = 1, vjust = 0.5, size = 7),
+          panel.grid.major = element_line(color = "gray90"))
+  # add legend
+  cowplot::plot_grid(
+    cowplot::plot_grid(
+      ggplot() + theme_void(),
+      draw_gradient(mouse_palette), draw_gradient(macaque_palette),
+      ncol = 6),
+    p, ncol = 1, rel_heights = rel_heights)
+}
+
+plot_cellex(top_genes)
+
+ggsave("panels/5H.png", width = 7.4, height = 2.9, units = "in", dpi = 400)
+```
+
+```{r}
+srt@misc$cellex[, levels(srt@active.ident)] %>%
+  rownames_to_column("Gene") %>%
+  mutate_if(is.numeric, round, 2) %>%
+  write.csv(., "tables/Supplementary File 8_conserved-cluster-markers.csv",
+            row.names = FALSE, na = "")
+
+srt@misc$cellex_combined %>%
+  select(gene, cluster, Mouse) %>%
+  mutate(Mouse = round(Mouse, 2)) %>%
+  pivot_wider(names_from = "cluster", values_from = "Mouse") %>%
+  select(gene, levels(srt@active.ident)) %>%
+  rename("Gene" = gene) %>%
+  write.csv(., "tables/Supplementary File 9_conserved-mouse-cluster-markers.csv",
+            row.names = FALSE, na = "")
+
+srt@misc$cellex_combined %>%
+  select(gene, cluster, Macaque) %>%
+  mutate(Macaque = round(Macaque, 2)) %>%
+  pivot_wider(names_from = "cluster", values_from = "Macaque") %>%
+  select(gene, levels(srt@active.ident)) %>%
+  rename("Gene" = gene) %>%
+  write.csv(., "tables/Supplementary File 10_conserved-macaque-cluster-markers.csv",
+            row.names = FALSE, na = "")
+```
+
+```{r}
+go <- srt@misc$go %>%
+  complete(dataset, cluster, Description, fill = list("qvalue" = 1))
+
+# get terms with top bias in the shared dataset
+top_go <- go %>%
+  group_by(cluster, Description) %>%
+  summarize("score" = min(
+    c(-log10(qvalue[dataset == "shared"]) - -log10(qvalue[dataset == "mouse"]),
+      -log10(qvalue[dataset == "shared"]) - -log10(qvalue[dataset == "macaque"])
+  )), .groups = "drop") %>%
+  group_by(Description) %>%
+  summarize("score" = mean(score), .groups = "drop") %>%
+  arrange(desc(score)) %>%
+  slice(1:20) %>%
+  pull(Description)
+
+df <- filter(srt@misc$go, Description %in% top_go) %>%
+  mutate(cluster = factor(cluster, levels = levels(srt@active.ident)),
+         Description = factor(Description, levels = top_go))
+
+
+ggplot(df, aes(x = cluster, y = fct_rev(Description), fill = -log10(qvalue))) +
+  geom_tile() +
+  scale_fill_gradient(low = "#ede5cf", high = "#541f3f", na.value = "gray90",
+                      name = expression("P value (-log"[10]*")")) +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 8),
+        axis.text.y = element_text(size = 8, hjust = 1),
+        strip.text = element_text(size = 9, hjust = 0.5),
+        strip.background = element_blank(),
+        legend.key.width = unit(0.02, "in"),
+        legend.key.height = unit(0.1, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 7))
+
+ggsave("panels/5_S1C.png", width = 7.5, height = 3, units = "in", dpi =400)
+```
+
+\pagebreak
+
+# Session info
+```{r}
+sessionInfo()
+```

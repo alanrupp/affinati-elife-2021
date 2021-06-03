@@ -1,5 +1,5 @@
-# Affinati, Sabatini et al. 2020
-This folder contains all the data and analysis required to generate the results from the Affinati, Sabatini et al. manuscript (full citation to come).
+# Affinati et al. 2021
+This folder contains all the data and analysis required to generate the results from the Affinati et al. manuscript (full citation below).
 
 ## Organization
 See the subdirectories for more information

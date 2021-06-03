@@ -3,7 +3,7 @@ This folder contains all the data and analysis required to generate the results 
 
 ## Organization
 See the subdirectories for more information
-* **experiments**: the raw data and analysis code
+* **experiments**: the raw data and analysis code (because of github size restrains, the snRNA-seq matrix files and outputs are not hosted here; see [GSE172207](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE172207) for all data and metadata)
   * **snRNA-seq**: 10x data and analyses
   * **TRAP-seq**: TRAP-seq data and analyses
 * **figures**: scripts and images to generate the figures; figures are in OpenDocument and Inkscape SVG formats

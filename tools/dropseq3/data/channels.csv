@@ -1,0 +1,281 @@
+gene,group
+Kcnd3,Voltage-gated potassium channel
+Kcnq2,Voltage-gated potassium channel
+Kcnq3,Voltage-gated potassium channel
+Kcnc2,Voltage-gated potassium channel
+Kcnb1,Voltage-gated potassium channel
+Kcnd2,Voltage-gated potassium channel
+Kcna5,Voltage-gated potassium channel
+Kcnc1,Voltage-gated potassium channel
+Kcnf1,Voltage-gated potassium channel
+Kcna3,Voltage-gated potassium channel
+Kcnc4,Voltage-gated potassium channel
+Kcna2,Voltage-gated potassium channel
+Kcnh2,Voltage-gated potassium channel
+Kcnb2,Voltage-gated potassium channel
+Kcnh8,Voltage-gated potassium channel
+Kcna4,Voltage-gated potassium channel
+Kcnq5,Voltage-gated potassium channel
+Kcna6,Voltage-gated potassium channel
+Kcnd1,Voltage-gated potassium channel
+Kcnc3,Voltage-gated potassium channel
+Kcnh6,Voltage-gated potassium channel
+Kcnh4,Voltage-gated potassium channel
+Kcnh1,Voltage-gated potassium channel
+Kcng1,Voltage-gated potassium channel
+Kcnh5,Voltage-gated potassium channel
+Kcng2,Voltage-gated potassium channel
+Kcnq4,Voltage-gated potassium channel
+Kcnh7,Voltage-gated potassium channel
+Kcnv1,Voltage-gated potassium channel
+Kcng4,Voltage-gated potassium channel
+Kcnq1,Voltage-gated potassium channel
+Kcna1,Voltage-gated potassium channel
+Kcng3,Voltage-gated potassium channel
+Kcns2,Voltage-gated potassium channel
+Kcnh3,Voltage-gated potassium channel
+Kcns1,Voltage-gated potassium channel
+Kcna7,Voltage-gated potassium channel
+Kcns3,Voltage-gated potassium channel
+Kcnv2,Voltage-gated potassium channel
+Kcna10,Voltage-gated potassium channel
+Kcnk9,Two-P potassium channel
+Kcnk2,Two-P potassium channel
+Kcnk1,Two-P potassium channel
+Kcnk3,Two-P potassium channel
+Kcnk10,Two-P potassium channel
+Kcnk6,Two-P potassium channel
+Kcnk12,Two-P potassium channel
+Kcnk13,Two-P potassium channel
+Kcnk7,Two-P potassium channel
+Kcnk4,Two-P potassium channel
+Kcnk15,Two-P potassium channel
+Kcnk16,Two-P potassium channel
+Kcnk18,Two-P potassium channel
+Kcnk5,Two-P potassium channel
+Kcnj5,Inwardly rectifying potassium channel
+Kcnj9,Inwardly rectifying potassium channel
+Kcnj3,Inwardly rectifying potassium channel
+Kcnj6,Inwardly rectifying potassium channel
+Kcnj13,Inwardly rectifying potassium channel
+Kcnj11,Inwardly rectifying potassium channel
+Kcnj10,Inwardly rectifying potassium channel
+Kcnj2,Inwardly rectifying potassium channel
+Kcnj14,Inwardly rectifying potassium channel
+Kcnj12,Inwardly rectifying potassium channel
+Kcnj4,Inwardly rectifying potassium channel
+Kcnj16,Inwardly rectifying potassium channel
+Kcnj8,Inwardly rectifying potassium channel
+Kcnj15,Inwardly rectifying potassium channel
+Kcnj1,Inwardly rectifying potassium channel
+Catsper2,CatSper and Two-Pore channel
+Tpcn1,CatSper and Two-Pore channel
+Tpcn2,CatSper and Two-Pore channel
+Catsper3,CatSper and Two-Pore channel
+Catsper1,CatSper and Two-Pore channel
+Catsper4,CatSper and Two-Pore channel
+Trpc4,Transient Receptor Potential channel
+Mcoln1,Transient Receptor Potential channel
+Trpm7,Transient Receptor Potential channel
+Trpc6,Transient Receptor Potential channel
+Trpv2,Transient Receptor Potential channel
+Trpc1,Transient Receptor Potential channel
+Pkd2,Transient Receptor Potential channel
+Trpc5,Transient Receptor Potential channel
+Pkd2l2,Transient Receptor Potential channel
+Trpm4,Transient Receptor Potential channel
+Trpc7,Transient Receptor Potential channel
+Trpm2,Transient Receptor Potential channel
+Trpv6,Transient Receptor Potential channel
+Trpc3,Transient Receptor Potential channel
+Trpm3,Transient Receptor Potential channel
+Trpm5,Transient Receptor Potential channel
+Trpc2,Transient Receptor Potential channel
+Trpv3,Transient Receptor Potential channel
+Trpv4,Transient Receptor Potential channel
+Trpm1,Transient Receptor Potential channel
+Trpa1,Transient Receptor Potential channel
+Trpv5,Transient Receptor Potential channel
+Trpm6,Transient Receptor Potential channel
+Pkd2l1,Transient Receptor Potential channel
+Trpv1,Transient Receptor Potential channel
+Mcoln3,Transient Receptor Potential channel
+Trpm8,Transient Receptor Potential channel
+Scn9a,Voltage-gated sodium channel
+Scn2a1,Voltage-gated sodium channel
+Scn3a,Voltage-gated sodium channel
+Scn1a,Voltage-gated sodium channel
+Scn8a,Voltage-gated sodium channel
+Scn7a,Voltage-gated sodium channel
+Scn5a,Voltage-gated sodium channel
+Scn11a,Voltage-gated sodium channel
+Scn10a,Voltage-gated sodium channel
+Scn4a,Voltage-gated sodium channel
+Cacna1e,Voltage-gated calcium channel
+Cacna1b,Voltage-gated calcium channel
+Cacna1d,Voltage-gated calcium channel
+Cacna1a,Voltage-gated calcium channel
+Cacna1c,Voltage-gated calcium channel
+Cacna1h,Voltage-gated calcium channel
+Cacna1i,Voltage-gated calcium channel
+Cacna1g,Voltage-gated calcium channel
+Cacna1f,Voltage-gated calcium channel
+Cacna1s,Voltage-gated calcium channel
+Hcn1,Cyclic nucleotide-regulated channel
+Cngb1,Cyclic nucleotide-regulated channel
+Hcn3,Cyclic nucleotide-regulated channel
+Hcn4,Cyclic nucleotide-regulated channel
+Hcn2,Cyclic nucleotide-regulated channel
+Cnga3,Cyclic nucleotide-regulated channel
+Cnga4,Cyclic nucleotide-regulated channel
+Cnga2,Cyclic nucleotide-regulated channel
+Cngb3,Cyclic nucleotide-regulated channel
+Cnga1,Cyclic nucleotide-regulated channel
+Kcnma1,Calcium-activated potassium channel
+Kcnn3,Calcium-activated potassium channel
+Kcnt1,Calcium-activated potassium channel
+Kcnt2,Calcium-activated potassium channel
+Kcnu1,Calcium-activated potassium channel
+Kcnn2,Calcium-activated potassium channel
+Kcnn1,Calcium-activated potassium channel
+Kcnn4,Calcium-activated potassium channel
+Hvcn1,Voltage-gated proton channel
+Panx2,Connexins and Pannexins
+Panx1,Connexins and Pannexins
+Gjd2,Connexins and Pannexins
+Gja4,Connexins and Pannexins
+Gja1,Connexins and Pannexins
+Gjb1,Connexins and Pannexins
+Gjc1,Connexins and Pannexins
+Gjd3,Connexins and Pannexins
+Gjb2,Connexins and Pannexins
+Gja8,Connexins and Pannexins
+Gja3,Connexins and Pannexins
+Gjb3,Connexins and Pannexins
+Gjb6,Connexins and Pannexins
+Gje1,Connexins and Pannexins
+Gja5,Connexins and Pannexins
+Gjc2,Connexins and Pannexins
+Gja10,Connexins and Pannexins
+Panx3,Connexins and Pannexins
+Gjd4,Connexins and Pannexins
+Gjb5,Connexins and Pannexins
+Gjb4,Connexins and Pannexins
+Gjc3,Connexins and Pannexins
+Clcn3,CIC family
+Clcn6,CIC family
+Clcn5,CIC family
+Clcn4-2,CIC family
+Clcn7,CIC family
+Clcn2,CIC family
+Clcn1,CIC family
+Clcnka,CIC family
+Clcnkb,CIC family
+Aqp8,Aquaporins
+Aqp4,Aquaporins
+Aqp1,Aquaporins
+Aqp7,Aquaporins
+Aqp3,Aquaporins
+Aqp6,Aquaporins
+Mip,Aquaporins
+Aqp5,Aquaporins
+Aqp9,Aquaporins
+Aqp2,Aquaporins
+Nalcn,"Sodium leak channel, non-selective"
+Ano1,Calcium-activated chloride channel
+Cftr,CFTR
+Gria2,Ionotropic glutamate receptor
+Gria4,Ionotropic glutamate receptor
+Gria1,Ionotropic glutamate receptor
+Grin1,Ionotropic glutamate receptor
+Grin2b,Ionotropic glutamate receptor
+Grik5,Ionotropic glutamate receptor
+Grik2,Ionotropic glutamate receptor
+Grid1,Ionotropic glutamate receptor
+Grid2,Ionotropic glutamate receptor
+Gria3,Ionotropic glutamate receptor
+Grik4,Ionotropic glutamate receptor
+Grin3a,Ionotropic glutamate receptor
+Grin2d,Ionotropic glutamate receptor
+Grik1,Ionotropic glutamate receptor
+Grin2a,Ionotropic glutamate receptor
+Grik3,Ionotropic glutamate receptor
+Grin3b,Ionotropic glutamate receptor
+Grin2c,Ionotropic glutamate receptor
+P2rx1,P2X receptor
+P2rx2,P2X receptor
+P2rx3,P2X receptor
+P2rx4,P2X receptor
+P2rx5,P2X receptor
+P2rx6,P2X receptor
+P2rx7,P2X receptor
+Asic1,Acid-sensing (proton-gated)
+Asic2,Acid-sensing (proton-gated)
+Asic3,Acid-sensing (proton-gated)
+Itpr1,IP3 receptor
+Itpr2,IP3 receptor
+Itpr3,IP3 receptor
+Ryr2,Ryanodine receptor
+Ryr3,Ryanodine receptor
+Ryr1,Ryanodine receptor
+Gabrb3,GABAA receptor
+Gabre,GABAA receptor
+Gabrq,GABAA receptor
+Gabra5,GABAA receptor
+Gabra3,GABAA receptor
+Gabrg1,GABAA receptor
+Gabrb1,GABAA receptor
+Gabrg3,GABAA receptor
+Gabrg2,GABAA receptor
+Gabra2,GABAA receptor
+Gabra1,GABAA receptor
+Gabrb2,GABAA receptor
+Gabra4,GABAA receptor
+Gabrr2,GABAA receptor
+Gabrd,GABAA receptor
+Gabrr1,GABAA receptor
+Gabrp,GABAA receptor
+Gabrr3,GABAA receptor
+Gabra6,GABAA receptor
+Chrnb2,Nicotinic acetylcholine receptor
+Chrna4,Nicotinic acetylcholine receptor
+Chrnb1,Nicotinic acetylcholine receptor
+Chrne,Nicotinic acetylcholine receptor
+Chrna7,Nicotinic acetylcholine receptor
+Chrng,Nicotinic acetylcholine receptor
+Chrna5,Nicotinic acetylcholine receptor
+Chrnb4,Nicotinic acetylcholine receptor
+Chrna3,Nicotinic acetylcholine receptor
+Chrna1,Nicotinic acetylcholine receptor
+Chrna9,Nicotinic acetylcholine receptor
+Chrna6,Nicotinic acetylcholine receptor
+Chrnb3,Nicotinic acetylcholine receptor
+Chrna10,Nicotinic acetylcholine receptor
+Chrnd,Nicotinic acetylcholine receptor
+Chrna2,Nicotinic acetylcholine receptor
+Glrb,Glycine receptor
+Glra2,Glycine receptor
+Glra3,Glycine receptor
+Glra1,Glycine receptor
+Glra4,Glycine receptor
+Gabbr1,GABAB receptor
+Gabbr2,GABAB receptor
+Htr1a,5-HT receptor
+Htr1b,5-HT receptor
+Htr1d,5-HT receptor
+Htr1f,5-HT receptor
+Htr2a,5-HT receptor
+Htr1b,5-HT receptor
+Htr1c,5-HT receptor
+Htr3a,5-HT receptor
+Htr3b,5-HT receptor
+Htr4,5-HT receptor
+Htr5a,5-HT receptor
+Htr5b,5-HT receptor
+Htr6,5-HT receptor
+Htr7,5-HT receptor
+Chrm1,Muscarinic acetylcholine receptor
+Chrm2,Muscarinic acetylcholine receptor
+Chrm3,Muscarinic acetylcholine receptor
+Chrm4,Muscarinic acetylcholine receptor
+Chrm5,Muscarinic acetylcholine receptor

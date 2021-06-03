@@ -1,4 +1,4 @@
-# Affinati et al. 2021
+# Affinati et al. *eLife* 2021
 This folder contains all the data and analysis required to generate the results from the Affinati et al. manuscript (full citation below).
 
 ## Organization

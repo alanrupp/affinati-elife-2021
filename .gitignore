@@ -1,2 +1,12 @@
+# R files
 *.Rdata
 *.rds
+*.Rhistory
+
+# Matrix files
+*.mtx.gz
+*.tsv.gz
+
+# Ensembl files
+*.fa.gz
+*.gtf.gz

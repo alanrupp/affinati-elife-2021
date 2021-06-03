@@ -1,0 +1,898 @@
+---
+title: "Conservation"
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: pdf_document
+geometry: margin=0.5in
+---
+
+Determining homologous VMH cell populations in mouse and macaque. I'm using both our dataset and the Kim et al. dataset to capture more of the ventrolateral portion.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(Seurat)
+library(knitr); library(kableExtra)
+options(bitmapType = "cairo")
+options(future.globals.maxSize = 6000 * 1024^2)
+map(list.files("../../../../tools/dropseq3/R", full.names = TRUE), source)
+```
+
+# Data
+All datasets were analyzed separately to determine species-specific cluster designations.
+
+```{r, include = FALSE}
+mouse <- readRDS("../mouse/vmh.rds")
+nhp <- readRDS("../macaque/vmh.rds")
+datasets <- c("mouse", "nhp")
+```
+
+```{r}
+# overview of samples
+data.frame(
+  "Species" = c("Mouse", "Macaque"),
+  "Samples" = map_int(datasets, ~ length(unique(get(.x)$Sample))),
+  "Neurons" = format(map_int(
+    datasets, ~ ncol(get(.x)@assays$RNA@counts)
+  ), big.mark = ","),
+  "Clusters" = map_int(datasets, ~ length(unique(get(.x)@active.ident)))
+) %>%
+  kable(caption = "Overview") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+```{r, fig.width = 7.5, fig.height = 4}
+plot_settings <- list(
+  theme_void(),
+  theme(legend.position = "none",
+        plot.title = element_text(hjust = 0.5, size = 10))
+)
+cowplot::plot_grid(plotlist = list(
+  DimPlot(mouse, label = TRUE) +
+    scale_color_manual(values = mouse@misc$cluster_colors) +
+    ggtitle("Mouse") +
+    plot_settings,
+  DimPlot(nhp, label = TRUE) +
+    ggtitle("Macaque") +
+    scale_color_manual(values = nhp@misc$cluster_colors) +
+    plot_settings
+))
+```
+
+```{r}
+# keep metadata for future use
+metadata <- map(
+  datasets,
+  ~ data.frame(
+    "cell" = rownames(get(.x)@meta.data),
+    "Sample" = get(.x)$Sample,
+    "Cluster" = get(.x)@active.ident)
+)
+names(metadata) <- datasets
+```
+
+
+\pagebreak
+
+# Preprocessing
+
+Before I integrate the data, I'm going to keep only the genes that are shared in both datasets.
+
+```{r, include = FALSE}
+# isolate just the raw count matrix files by species
+mtx <- map(datasets, ~ get(.x)@assays$RNA@counts)
+names(mtx) <- datasets
+gc()
+```
+
+```{r}
+print("Reading in ortholog info from Ensembl ...")
+# read in ortholog info and only keep orthologs with 1:1 mapping
+orthologs <- read_tsv("../../data/mouse_to_macaque.tsv.gz")
+
+# get unique genes by species
+unique_mouse <- names(table(orthologs$`Gene name`))[
+  table(orthologs$`Gene name`) == 1
+]
+unique_nhp <- names(table(orthologs$`Gene name_1`))[
+  table(orthologs$`Gene name_1`) == 1
+]
+
+# only keep genes that are in the dataset
+unique_mouse <- unique_mouse[unique_mouse %in% rownames(mouse)]
+unique_nhp <- unique_nhp[unique_nhp %in% rownames(nhp)]
+
+# QRFPR is a 1:2 mapper from macaque:mouse because of Qrfprl in mouse
+unique_nhp <- c(unique_nhp, "QRFPR")
+
+# keep orthologs
+orthologs <- orthologs %>% filter(
+  `Gene name` %in% unique_mouse & `Gene name_1` %in% unique_nhp
+)
+```
+
+In macaque there are `r format(nrow(orthologs), big.mark = ",")` genes that are 1:1 orthologs with mouse. This is almost certainly enough for reliable clustering.
+
+```{r}
+# only keeping 1:1 orthologs
+mtx$nhp <- mtx$nhp[rownames(mtx$nhp) %in% orthologs$`Gene name_1`, ]
+mtx$mouse <- mtx$mouse[rownames(mtx$mouse) %in% orthologs$`Gene name`, ]
+rownames(mtx$nhp) <- orthologs$`Gene name`[
+  match(rownames(mtx$nhp), orthologs$`Gene name_1`)
+]
+```
+
+I'm going to retain all genes and cells, because I previously filtered each species separately for lowly expressed genes and cells with few detected genes.
+
+Continuing with integration.
+
+\pagebreak
+
+# Projection
+First, I'll see if I can project the cluster names from each species onto cells of the other species. I'll use only 1:1 orthologs from Ensembl.
+
+```{r}
+srt <- map(mtx, CreateSeuratObject)
+srt <- map(srt, normalize_data)
+srt <- map(srt, FindVariableFeatures)
+
+# add metadata
+srt[["mouse"]]$Species <- "Mouse"
+srt[["nhp"]]$Species <- "Macaque"
+
+srt[["mouse"]]$Sample <- metadata[["mouse"]]$Sample
+srt[["nhp"]]$Sample <- metadata[["nhp"]]$Sample
+
+srt[["mouse"]]$Cluster <- metadata[["mouse"]]$Cluster
+srt[["nhp"]]$Cluster <- metadata[["nhp"]]$Cluster
+
+srt[["mouse"]]@active.ident <- factor(srt[["mouse"]]$Cluster)
+names(srt[["mouse"]]@active.ident) <- Cells(srt[["mouse"]])
+srt[["nhp"]]@active.ident <- factor(srt[["nhp"]]$Cluster)
+names(srt[["nhp"]]@active.ident) <- Cells(srt[["nhp"]])
+
+rm(metadata)
+```
+
+```{r}
+mouse_markers <- rownames(mouse@misc$cellex)[
+  apply(mouse@misc$cellex, 1, function(x) any(x > 0.5))
+]
+nhp_markers <- rownames(nhp@misc$cellex)[
+  apply(nhp@misc$cellex, 1, function(x) any(x > 0.5))
+]
+nhp_markers <- orthologs$`Gene name`[match(nhp_markers, orthologs$`Gene name_1`)]
+markers <- union(mouse_markers, nhp_markers)
+markers <- markers[markers %in% orthologs$`Gene name`]
+
+anchors <- FindTransferAnchors(srt$mouse, srt$nhp, features = markers,
+                               reduction = "cca")
+mouse_labels <- TransferData(anchors, srt$mouse@active.ident,
+                             weight.reduction = "cca")
+mouse_labels$Cluster <- nhp@active.ident
+
+anchors <- FindTransferAnchors(srt$nhp, srt$mouse, features = markers,
+                               reduction = "cca")
+nhp_labels <- TransferData(anchors, srt$nhp@active.ident,
+                           weight.reduction = "cca")
+nhp_labels$Cluster <- mouse@active.ident
+```
+
+```{r}
+# add factor levels
+mouse_labels <- mouse_labels %>%
+  mutate(Cluster = factor(Cluster, levels = levels(nhp@active.ident)),
+         predicted.id = factor(predicted.id, levels = levels(mouse@active.ident)))
+nhp_labels <- nhp_labels %>%
+  mutate(Cluster = factor(Cluster, levels = levels(mouse@active.ident)),
+         predicted.id = factor(predicted.id, levels = levels(nhp@active.ident)))
+
+```
+
+```{r}
+plot_settings <- list(
+  geom_point(aes(color = score, size = total)),
+  theme_void(),
+  scale_color_gradient(low = "#ede5cf", high = "#541f3f",
+                       name = "Transfer\nscore"),
+  scale_size_area(name = "Cells"),
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 7),
+        axis.text.y = element_text(hjust = 1, size = 7),
+        plot.title = element_text(size = 8, hjust = 0.5),
+        legend.key.width = unit(0.02, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6))
+)
+
+cowplot::plot_grid(plotlist = list(
+  nhp_labels %>%
+    group_by(Cluster, predicted.id) %>%
+    summarize("score" = median(prediction.score.max),
+              "total" = n()) %>%
+    ggplot(aes(x = Cluster, y = fct_rev(predicted.id))) +
+      plot_settings +
+      ggtitle("Mouse to Macaque projection"),
+  mouse_labels %>%
+    group_by(Cluster, predicted.id) %>%
+    summarize("score" = median(prediction.score.max),
+              "total" = n()) %>%
+    ggplot(aes(x = predicted.id, y = fct_rev(Cluster))) +
+      plot_settings +
+      ggtitle("Macaque to Mouse projection")
+))
+```
+
+The cell types map as you would expect given their cluster marker genes.
+
+I'm saving the transfer results as `transfer_labels.rds` so I can access it in the future more easily.
+
+```{r}
+saveRDS(list("mouse" = mouse_labels, "nhp" = nhp_labels), "transfer_labels.rds")
+```
+
+
+\pagebreak
+
+# Integration
+
+I'm going to use the Seurat CCA framework to integrate the data.
+
+```{r}
+# save cluster colors for future
+mouse_colors <- mouse@misc$cluster_colors
+nhp_colors <- nhp@misc$cluster_colors
+
+# remove intermediate objects
+rm(mtx, mouse, nhp, orthologs)
+```
+
+```{r}
+# add species info
+srt[["mouse"]]$Species <- "Mouse"
+srt[["nhp"]]$Species <- "Macaque"
+```
+
+I'm going to integrate data by sample, irrespective of species.
+
+```{r}
+# split object by Sample
+srt <- merge(srt$mouse, srt$nhp)
+srt <- SplitObject(srt, "Sample")
+```
+
+**Pipeline:**
+1. Normalizing data with `scran` `r packageVersion("scran")` for each run independently
+2. Finding variable genes with `Seurat`
+3. Integrating data with `Seurat` CCA method
+4. Scaling variable genes for the integrated data
+5. Running PCA on scaled data
+6. Choosing PCs from the elbow on the scree plot
+7. Projecting into UMAP space
+
+```{r, include = FALSE}
+# normalize data
+srt <- map(srt, normalize_data)
+srt <- map(srt, FindVariableFeatures)
+srt <- integrate_data(srt)
+srt <- ScaleData(srt)
+srt <- RunPCA(srt, npcs = 100)
+srt@reductions$pca@misc$sig_pcs <- knee_test(srt)
+srt <- RunUMAP(srt, dims = 1:srt@reductions$pca@misc$sig_pcs)
+gc()
+```
+
+Looking for speices-specific and sequencing depth effects ...
+
+```{r, fig.height = 2.5, fig.width = 2.2}
+species_colors <- c("#dc7176", "#63a6a0")
+srt@misc$species_colors <- species_colors
+
+DimPlot(srt, group.by = "Species", cells = sample(Cells(srt))) +
+  scale_color_manual(values = species_colors) +
+  theme_void() +
+  theme(legend.position = "top", legend.direction = "horizontal")
+```
+
+This looks great!
+
+\pagebreak
+
+# Clustering integrated data
+
+To cluster, I'll start with standard Louvain clustering from the kNN graph. With `k` set at 20, I'll vary the `resolution` parameter to optimize mean silhouette width.
+
+```{r}
+resolutions <- seq(0.2, 2, by = 0.2)
+print(paste("Finding clusters for resolutions", paste(resolutions, collapse = ", "), "..."))
+```
+
+```{r, include = FALSE}
+sig_pcs <- srt[["pca"]]@misc$sig_pcs
+srt <- FindNeighbors(srt, dims = 1:sig_pcs)
+
+clusters <- map_dfc(
+  resolutions,
+  ~ FindClusters(srt, resolution = .x)@active.ident
+)
+# get dissimilarity matrix
+distances <- cluster::daisy(srt[["pca"]]@cell.embeddings[, 1:sig_pcs])
+
+# calculate silhouette width for each clustering
+mean_widths <- apply(clusters, 2, function(x) {
+  silhouette_object <- cluster::silhouette(as.numeric(x), distances)
+  summary(silhouette_object)[["avg.width"]]
+})
+
+# choose best resolution based on max mean silhoutte width
+best_resolution <- resolutions[mean_widths == max(mean_widths)]
+
+# add clustering to official ident slot
+srt@active.ident <- clusters[, resolutions == best_resolution][[1]]
+
+# remove unnecessary object
+rm(resolutions, clusters, sig_pcs, distances, mean_widths); gc()
+```
+
+Using resolution `r best_resolution`, there are `r length(unique(srt@active.ident))` populations.
+
+
+\pagebreak
+
+# Markers
+I'll now find markers to name the clusters using `CELLEX`.
+
+```{r, include = FALSE}
+srt@misc$cellex <- cellex(
+  as.data.frame(as.matrix(srt@assays$RNA@counts)),
+  srt@active.ident  
+)
+srt@misc$cellex <- srt@misc$cellex[, levels(srt@active.ident)]
+```
+
+```{r order-neurons}
+print("Reordering clusters based on similarity ...")
+# recode based on similarity
+cluster_order <- order_clusters(srt, assay = "integrated")
+
+srt@active.ident <- factor(
+  srt@active.ident,
+  levels = cluster_order,
+  labels = 1:length(cluster_order)
+)
+srt@misc$cellex <- srt@misc$cellex[, cluster_order]
+colnames(srt@misc$cellex) <- 1:length(cluster_order)
+```
+
+```{r, fig.width = 7.5, fig.height = 3}
+cowplot::plot_grid(plotlist = list(
+  table(srt$Species, srt@active.ident) %>%
+    as.data.frame() %>%
+    mutate("Species" = Var1) %>%
+    ggplot(aes(x = Var2, y = Freq, fill = Species)) +
+    geom_col(color = "black") +
+    theme_classic() +
+    scale_y_continuous(expand = c(0, 0)) +
+    ylab("Cells") +
+    xlab(NULL) +
+    theme(axis.text.x = element_text(),
+          legend.position = c(0.8, 0.8)),
+  table(srt$Sample[srt$Species == "Mouse"],
+        srt@active.ident[srt$Species == "Mouse"]) %>%
+    as.data.frame() %>%
+    mutate("Sample" = Var1) %>%
+    ggplot(aes(x = Var2, y = Freq, fill = Sample)) +
+    geom_col(color = "black") +
+    theme_classic() +
+    scale_y_continuous(expand = c(0, 0)) +
+    ylab("Cells") +
+    xlab(NULL) +
+    theme(axis.text.x = element_text())
+), rel_widths = c(0.38, 0.62))
+```
+
+```{r, include = FALSE}
+DefaultAssay(srt) <- "RNA"
+srt <- scale_data(srt, group = "Sample")
+```
+
+Finding markers that are conserved in both macaque and mouse ...
+
+```{r, include = FALSE}
+srt@misc$markers <- FindAllConservedMarkers(srt, groupby = "Species")
+```
+
+\pagebreak
+
+# VMH clusters
+```{r}
+species_mean <- function(genes, data = "scale.data", assay = "RNA",
+                         cluster = NULL) {
+  if (is.null(cluster)) {
+    cells <- Cells(srt)
+  } else {
+    cells <- Cells(srt)[srt@active.ident == cluster]
+  }
+  df <- map_dfc(
+    unique(srt$Species),
+    ~ Matrix::rowMeans(slot(srt[[assay]], data)[
+      genes, intersect(Cells(srt)[srt$Species == .x], cells)
+      ], na.rm = TRUE)
+    ) %>%
+    set_names(unique(srt$Species))
+  df$gene <- genes
+  df$cluster <- cluster
+  return(df)
+}
+```
+
+
+Getting marker genes across populations and species
+
+```{r}
+marker_genes <- c("Dlk1", "Qrfpr", "Esr1", "Nfib", "Foxp2", "Lepr", "Fezf1")
+
+marker_means <- map_dfr(
+  unique(srt@active.ident),
+  ~ species_mean(marker_genes, cluster = .x)
+) %>%
+  pivot_longer(c(Mouse, Macaque), names_to = "Species", values_to = "z") %>%
+  mutate(z = ifelse(z > 2, 2, ifelse(z < -1, -1, z))) %>%
+  mutate(gene = factor(gene, levels = marker_genes))
+
+marker_plot <- function(species) {
+  ggplot(filter(marker_means, Species == species),
+           aes(x = cluster, y = fct_rev(gene), fill = z)) +
+    geom_tile() +
+  scale_fill_gradient2(low = "red4", high = "blue4",
+                      name = "Scaled\nexpression") +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                   size = 6),
+        axis.text.y = element_text(hjust = 1, size = 6),
+        plot.title = element_text(hjust = 0.5, size = 8),
+        legend.position = "none") +
+    ggtitle(species)
+}
+```
+
+```{r, fig.height = 2.4, fig.width = 1.6}
+cowplot::plot_grid(plotlist = list(
+  marker_plot("Macaque"),
+  marker_plot("Mouse") +
+    theme(legend.position = "bottom",
+          legend.direction = "horizontal",
+          legend.key.height = unit(0.02, "in"),
+          legend.title = element_text(size = 6, hjust = 1),
+          legend.text = element_text(size = 5))
+), ncol = 1, rel_heights = c(1, 1.25))
+```
+
+```{r}
+cluster_names <- c(
+  `8` = "Esr1_1",
+  `9` = "Esr1_2",
+  `1` = "Esr1_3",
+  `2` = "Dlk1_1",
+  `3` = "Dlk1_2",
+  `10` = "Fezf1_1",
+  `11` = "Fezf1_2",
+  `5` = "Lepr_1",
+  `6` = "Lepr_2",
+  `7` = "Lepr_3",
+  `16` = "Nfib_1",
+  `17` = "Nfib_2",
+  `13` = "Foxp2_1",
+  `14` = "Foxp2_2",
+  `4` = "Doublets_1",
+  `12` = "Doublets_2",
+  `15` = "Doublets_3"
+)
+
+srt@active.ident <- recode(srt@active.ident, !!!cluster_names)
+srt@active.ident <- factor(srt@active.ident, levels = cluster_names)
+
+srt@misc$markers$cluster <- recode(srt@misc$markers$cluster, !!!cluster_names)
+srt@misc$markers$cluster <- factor(srt@misc$markers$cluster, levels = cluster_names)
+
+srt@misc$cellex <- srt@misc$cellex[, names(cluster_names)]
+colnames(srt@misc$cellex) <- cluster_names
+```
+
+```{r}
+# choose colors based on our population colors
+class_table <- table(
+  srt@active.ident[srt$Species == "Mouse"],
+  srt$Cluster[srt$Species == "Mouse"]
+)
+class_table <- class_table[, names(mouse_colors)]
+rgb_colors <- col2rgb(mouse_colors)
+rgb2hex <- function(v) rgb(v[1], v[2], v[3], maxColorValue = 255)
+cluster_colors <- apply(class_table, 1, function(x) {
+  total = sum(x)
+  rgb_color = sapply(1:length(x), function(i) x[i]/total * rgb_colors[, i])
+  rgb2hex(rowSums(rgb_color))
+})
+srt@misc$cluster_colors <- cluster_colors
+srt@misc$cluster_colors <- srt@misc$cluster_colors[
+  order(factor(names(srt@misc$cluster_colors), levels = cluster_names))
+]
+```
+
+```{r}
+DimPlot(srt, label = TRUE) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = srt@misc$cluster_colors)
+```
+
+## Breakdown by species
+
+```{r}
+# calculate frequency of each cluster within each species
+species_table <- table(srt$Species, srt@active.ident, srt$Sample) %>%
+  as.data.frame() %>%
+  filter(!is.na(Freq)) %>%
+  rename("Species" = Var1, "Cluster" = Var2, "Sample" = Var3) %>%
+  group_by(Species, Sample) %>%
+  mutate("Freq" = Freq / sum(Freq)*100) %>%
+  filter(!is.na(Freq))
+```
+
+```{r, fig.width = 1.2, fig.height = 2.4}
+species_table %>%
+  group_by(Cluster, Species) %>%
+  summarize("avg" = mean(Freq), "sem" = sd(Freq)/sqrt(n())) %>%
+  ggplot(aes(x = fct_rev(Cluster), y = avg, fill = Species)) +
+  geom_col(color = "black", position = "dodge") +
+  geom_errorbar(aes(ymin = avg - sem, ymax = avg + sem), width = 0.4,  
+                position = position_dodge(width = 0.9)) +
+  scale_fill_manual(values = species_colors, guide = FALSE) +
+  coord_flip() +
+  theme_classic() +
+  annotate("text", x = 10, y = 10, label = "Macaque", hjust = 0,
+           color = species_colors[1], size = 2, fontface = "bold") +
+  annotate("text", x = 10.5, y = 10, label = "Mouse", hjust = 0,
+           color = species_colors[2], size = 2, fontface = "bold") +
+  scale_y_continuous(expand = c(0, 0)) +
+  ylab("% of cells") +
+  xlab(NULL) +
+  theme(axis.text.x = element_text(color = "black", size = 7),
+        axis.text.y = element_text(color = "black", size = 8),
+        axis.title = element_text(size = 8))
+```
+
+
+```{r, fig.height = 2.6, fig.width = 2.1}
+marker_genes <-
+  filter(srt@misc$markers, p_val_adj < 0.05) %>%
+  filter(gene %in% rownames(srt@assays$integrated@scale.data)) %>%
+  arrange(p_val_adj) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  arrange(p_val_adj) %>%
+  slice(1:10) %>%
+  ungroup() %>%
+  arrange(cluster) %>%
+  .$gene
+df <- srt@assays$integrated@scale.data[marker_genes, ] %>%
+  Matrix::t() %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  bind_cols(., data.frame(
+    "cluster" = srt@active.ident),
+    "cell" = names(srt@active.ident)
+    ) %>%
+  gather(-cluster, -cell, key = "gene", value = "expr") %>%
+  mutate(gene = factor(gene, levels = marker_genes)) %>%
+  arrange(cluster) %>%
+  mutate(cell = factor(cell, levels = unique(cell))) %>%
+  mutate(expr = ifelse(expr > 2, 2, ifelse(expr < -1, -1, expr)))
+
+p <- ggplot(df, aes(x = cell, y = fct_rev(gene), fill = expr)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red4", high = "blue4",
+                      name = "Scaled\nexpression",
+                      breaks = seq(-1, 2),
+                      labels = c("<-1", 0, 1, ">2")) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.key.height = unit(0.03, "in"),
+        legend.text = element_text(size = 6),
+        legend.title = element_text(size = 6),
+        panel.border = element_rect(fill = NA, color = "black"))
+# add cluster color bars
+cluster_table <- df %>% group_by(cluster) %>% count() %>%
+  mutate(n = n / length(marker_genes)) %>% ungroup() %>%
+  mutate("end" = cumsum(n)) %>%
+  mutate("start" = lag(end, default = 0) + 1)
+for (i in 1:nrow(cluster_table)) {
+  p <- p + annotate(
+    "rect",
+    xmin = cluster_table[i, ]$start,
+    xmax = cluster_table[i, ]$end,
+    ymin = -length(marker_genes)*0.03,
+    ymax = 0,
+    fill = srt@misc$cluster_colors[i],
+    color = "black"
+  )
+}
+
+p
+
+```
+
+\pagebreak
+
+# Cluster comparison
+Comparing mouse-only and macaque-only species designations to the combined designation.
+
+```{r}
+# compare to mouse data
+mouse <- readRDS("../mouse/vmh.rds")
+```
+
+```{r, fig.width = 2.1, fig.height = 2.5}
+cowplot::plot_grid(plotlist = list(
+  data.frame(
+    "cluster" = srt@active.ident[srt$Species == "Mouse"],
+    "original" = srt$Cluster[srt$Species == "Mouse"]
+  ) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = -n, fill = original)) +
+  geom_col(color = "black") +
+    scale_fill_manual(values = mouse_colors, name = NULL) +
+  coord_flip() +
+  theme_void() +
+    theme(legend.position = "left",
+          plot.title = element_text(hjust = 0.5, size = 9),
+          legend.key.height = unit(0.1, "in"),
+          legend.key.width = unit(0.05, "in"),
+        legend.text = element_text(size = 5),
+        legend.title = element_text(size = 6)) +
+    guides(fill = guide_legend(ncol = 1)) +
+    ggtitle("Mouse"),
+  data.frame("cluster" = srt@active.ident[srt$Species == "Macaque"],
+             "original" = srt$Cluster[srt$Species == "Macaque"]) %>%
+
+    mutate(original = factor(
+      original,
+      levels = c("QRFPR", "ESR1_1", "ESR1_2",
+                 "NFIB_1", "NFIB_2", "FOXP2_2", "LEPR")
+    )) %>%
+  group_by(cluster, original) %>%
+  count() %>%
+  ggplot(aes(x = fct_rev(cluster), y = n, fill = original)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = nhp_colors, name = NULL) +
+    guides(fill = guide_legend(ncol = 1)) +
+  coord_flip() +
+  theme_void() +
+  theme(axis.text.y = element_text(size = 7),
+        legend.position = "right",
+        plot.title = element_text(hjust = 0.5, size = 9),
+        legend.key.height = unit(0.1, "in"),
+        legend.key.width = unit(0.05, "in"),
+        legend.text = element_text(size = 5),
+        legend.title = element_text(size = 6)) +
+    ggtitle("Macaque")
+), rel_widths = c(0.42, 0.58))
+```
+
+\pagebreak
+
+# Unique cluster genes
+I'll look for genes that are enriched in both species for a given cluster using `CELLEX`.
+
+```{r}
+print("Running CELLEX ...")
+# for each species
+macaque_cellex <- cellex(
+  as.data.frame(as.matrix(srt@assays$RNA@counts[, srt$Species == "Macaque"])),
+  srt@active.ident[srt$Species == "Macaque"]
+)
+mouse_cellex <- cellex(
+  as.data.frame(as.matrix(srt@assays$RNA@counts[, srt$Species == "Mouse"])),
+  srt@active.ident[srt$Species == "Mouse"]
+)
+```
+
+```{r}
+# restructure
+reshape <- function(df) {
+  name <- str_to_title(str_extract(deparse(substitute(df)), "^[:alnum:]+"))
+  df %>% rownames_to_column("gene") %>%
+    pivot_longer(-gene, names_to = "cluster", values_to = name)
+}
+results <- full_join(
+  reshape(macaque_cellex), reshape(mouse_cellex), by = c("gene", "cluster")
+) %>%
+  mutate_at(vars(Macaque, Mouse), ~ ifelse(is.na(.x), 0, .x)) %>%
+  mutate(cluster = factor(cluster, levels = levels(srt@active.ident)))
+
+geometric_mean <- function(nums) prod(nums)^(1/length(nums))
+
+results$Average <- apply(results, 1, function(x) {
+  geometric_mean(c(as.numeric(x["Macaque"]), as.numeric(x["Mouse"])))
+})
+results <- results %>%
+  mutate(Bias_Mouse = Mouse - Macaque,
+         Bias_Macaque = Macaque - Mouse)
+
+# add results to srt object
+srt@misc$cellex_combined <- results
+saveRDS(srt, "vmh.rds")
+```
+
+```{r}
+# getting the top 5 genes by average ESmu for each cluster
+top_genes <- results %>%
+  arrange(desc(Average)) %>%
+  filter(!duplicated(gene)) %>%
+  group_by(cluster) %>%
+  slice(1:3) %>%
+  pull(gene)
+```
+
+```{r}
+draw_gradient <- function(palette) {
+  title <- str_to_title(str_extract(deparse(substitute(palette)), "^[:alnum:]+"))
+  title <- paste(title, "ES\u03BC")
+  ggplot(data.frame("x" = seq(length(palette)),
+                    color = factor(palette, levels = palette)),
+         aes(x = x, y = 1, fill = color)) +
+    geom_tile(show.legend = FALSE) +
+    scale_fill_manual(values = palette) +
+    theme_void() +
+    ggtitle(title) +
+    scale_x_continuous(breaks = seq(0, 100, by = 25),
+                       labels = seq(0, 1, by = 0.25)) +
+    theme(axis.text.x = element_text(size = 6),
+          plot.title = element_text(hjust = 0.5, size = 6))
+}
+
+plot_cellex <- function(genes, rel_heights = c(0.1, 1)) {
+  # set up data.frame
+  df <- select(results, gene, cluster, Macaque, Mouse) %>%
+    filter(gene %in% genes) %>%
+    pivot_longer(c(Macaque, Mouse), names_to = "Species", values_to = "ESmu") %>%
+    mutate(Species = factor(Species, levels = c("Mouse", "Macaque")),
+           gene = factor(gene, levels = genes)) %>%
+    mutate(x = as.numeric(gene) + (as.numeric(Species)-1.5)*0.5)
+
+  # assign colors to each dot by species and ESmu value
+  df$Color <- paste(df$Species, round(df$ESmu*100, 0))
+  macaque_palette <- colorRampPalette(c("#fbe6c5", "#672044"))(100)
+  mouse_palette <- colorRampPalette(c("#e4f1e1", "#0d585f"))(100)
+  palette <- c(macaque_palette, mouse_palette)
+  names(palette) <- c(paste("Macaque", seq(100)), paste("Mouse", seq(100)))
+  # add 0 values
+  palette["Macaque 0"] <- macaque_palette[1]
+  palette["Mouse 0"] <- mouse_palette[1]
+
+  p <- ggplot(df, aes(x = x, y = fct_rev(cluster), color = Color)) +
+    geom_point(show.legend = FALSE, stroke = 0, size = 1.7) +
+    scale_color_manual(values = palette) +
+    theme_void() +
+    scale_x_continuous(labels = top_genes,
+                       breaks = seq(length(top_genes)),
+                       limits = c(0, length(top_genes) + 1),
+                       expand = c(0, 0)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     size = 7, face = "italic"),
+          axis.text.y = element_text(hjust = 1, vjust = 0.5, size = 7),
+          panel.grid.major = element_line(color = "gray90"))
+  # add legend
+  cowplot::plot_grid(
+    cowplot::plot_grid(
+      ggplot() + theme_void(),
+      draw_gradient(mouse_palette), draw_gradient(macaque_palette),
+      ncol = 6),
+    p, ncol = 1, rel_heights = rel_heights)
+}
+```
+
+```{r, fig.width = 7.5, fig.height = 4}
+plot_cellex(top_genes)
+```
+
+\pagebreak
+
+# GO analysis
+Looking for GO terms that are in the set of common genes, or in the genes that are specific to one species or another.
+```{r}
+srt@misc$cellex_combined <- mutate(srt@misc$cellex_combined, "Group" = case_when(
+  Macaque > 0 & Mouse > 0 ~ "Both",
+  Macaque > 0 ~ "NHP",
+  Mouse > 0 ~ "Mouse"
+))
+
+shared_genes <- map(
+  levels(srt@active.ident),
+  ~ filter(srt@misc$cellex_combined, Group == "Both" & cluster == .x)$gene
+)
+
+mouse_genes <- map(
+  levels(srt@active.ident),
+  ~ filter(srt@misc$cellex_combined, Group == "Mouse" & cluster == .x)$gene
+)
+
+macaque_genes <- map(
+  levels(srt@active.ident),
+  ~ filter(srt@misc$cellex_combined, Group == "NHP" & cluster == .x)$gene
+)
+
+names(shared_genes) <- levels(srt@active.ident)
+names(mouse_genes) <- levels(srt@active.ident)
+names(macaque_genes) <- levels(srt@active.ident)
+```
+
+Determining the GO pathways associated with each set of genes
+
+```{r}
+print("Running clusterProfiler::enrichGO ...")
+
+convert <- function(genes, from = "SYMBOL", to = "ENTREZID") {
+  result <- AnnotationDbi::select(
+    org.Mm.eg.db::org.Mm.eg.db,
+    keys = genes,
+    columns = c(to, from),
+    keytype = from)
+  return(result[, to])
+}
+
+go_function <- function(genes) {
+  clusterProfiler::enrichGO(
+    gene = convert(genes),
+    OrgDb = org.Mm.eg.db::org.Mm.eg.db,
+    pvalueCutoff = 0.05,
+    universe = convert(rownames(srt))
+  )
+}
+
+run_go <- function(geneset) {
+  result <- map(geneset, ~ as.data.frame(go_function(.x)))
+  result <- map(
+    1:length(result),
+    ~ mutate(result[[.x]], "cluster" = levels(srt@active.ident)[.x])
+    )
+  return(bind_rows(result))
+}
+
+go <- map(
+  c("shared_genes", "mouse_genes", "macaque_genes"),
+  ~ run_go(get(.x))
+)
+names(go) <- str_extract(
+  c("shared_genes", "mouse_genes", "macaque_genes"), ".+(?=_genes)"
+)
+go <- map(1:length(go), ~ mutate(go[[.x]], dataset = names(go)[.x]))
+go <- bind_rows(go)
+```
+
+There are `r nrow(go)` GO terms that are associated with any geneset.
+
+Stashing the GO results in `object@misc$go`
+
+```{r}
+srt@misc$go <- go
+```
+
+\pagebreak
+
+# Files
+
+Saving `srt` R object as `vmh.rds`.
+
+```{r}
+saveRDS(srt, "vmh.rds")
+```
+
+\pagebreak
+
+# Session info
+
+```{r}
+sessionInfo()
+```

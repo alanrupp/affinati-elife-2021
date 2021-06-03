@@ -1,0 +1,126 @@
+---
+title: "TRAP comparison"
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: pdf_document
+geometry: margin=0.5in
+---
+
+Comparing using LepRb-Cre alone vs. the dual LepRb-Cre+Slc17a6-Flpo TRAP method for identifying genes enriched in *Lepr* VMH cells.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center")
+library(tidyverse)
+library(knitr); library(kableExtra)
+```
+
+```{r}
+hypo <- read_csv("../Hypo_Lepr/results.csv")
+dual <- read_csv("../VMH_Slc17a6+Lepr/results.csv")
+sf1 <- read_csv("../VMH_Nr5a1/results.csv")
+vmh <- read_csv("../VMH_Lepr/results/enrichment.csv")
+```
+
+```{r}
+controls <- c("Gfp_L10a", "Cre", "Lepr", "Slc17a6", "Flpo")
+anno <- read_csv("../../../tools/dropseq3/data/annotation.csv")
+neuropeptides <- filter(anno, neuropeptide == 1)$gene
+```
+
+```{r}
+stick_plot <- function(genes, label_vmh = FALSE) {
+  df <- left_join(hypo, vmh, by = c("gene" = "Gene")) %>%
+    filter(gene %in% genes) %>%
+    select(gene, starts_with("Enrichment")) %>%
+    rename("Hypo" = Enrichment.x, "VMH" = Enrichment.y) %>%
+    left_join(., dual, by = c("gene" = "gene_name")) %>%
+    select(-P, -Bead, -Sup, -gene_id) %>%
+    rename("Dual" = Enrichment) %>%
+    pivot_longer(-gene, names_to = "Dataset", values_to = "Enrichment") %>%
+    mutate(Dataset = factor(Dataset,
+                            levels = c("Hypo", "VMH", "Dual"),
+                            labels = c("Hypothalamus\nCre", "VMH\nCre",
+                                       "VMH\nCre+Flp")))
+
+  # some enrichment values are NA, replacing with 0
+  df <- mutate(df, Enrichment = ifelse(is.na(Enrichment), 0, Enrichment))
+
+  # gene levels
+  gene_levels <- df %>% filter(Dataset == "Hypothalamus\nCre") %>%
+    arrange(desc(Enrichment)) %>% .$gene
+  df <- mutate(df, gene = factor(gene, levels = gene_levels))
+  # plot
+  p <- ggplot(df,
+              aes(x = fct_rev(gene), y = Enrichment,
+                  color = Enrichment)) +
+    geom_col(width = 0.01, show.legend = FALSE) +
+    geom_point(show.legend = FALSE) +
+    scale_color_gradient2(mid = "gray80", high = "blue4", low = "red4") +
+    facet_wrap(~Dataset, ncol = 3) +
+    ylab(expression("Enrichment (log"[2]*")")) +
+    coord_flip() +
+    theme_void() +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme(axis.text.x = element_text(size = 8),
+          axis.text.y = element_text(size = 9, hjust = 1),
+          strip.text = element_text(size = 10),
+          axis.title = element_text(size = 9, margin = margin(t = 10)),
+          axis.title.y = element_blank())
+  if (label_vmh) {
+    # if gene is enriched in Sf1, add a dot
+    sf1_genes <- filter(sf1, Enrichment > 0 & P < 0.05)$gene_name
+    label_genes <- intersect(genes, sf1_genes)
+    if (length(label_genes) == 0) {
+      warning("No plotted genes are enriched in SF1 TRAP-seq")
+    } else {
+      xval <- max(df$Enrichment)*1.1
+      for (i in label_genes) {
+        p <- p + annotate("point",
+                          y = xval,
+                          x = length(gene_levels)-which(gene_levels == i)+1,
+                          color = "red4")
+      }
+      p <- p + scale_y_continuous(limits = c(NA, xval*1.1))
+    }
+  }
+  return(p)
+}
+```
+
+## Controls
+
+```{r, fig.width = 6, fig.height = 1.5}
+stick_plot(controls)
+```
+
+```{r}
+# find genes enriched in any of the 3 Lepr TRAP datasets
+common_genes <- union(
+  union(
+    filter(hypo, P < 0.05 & Enrichment > 0)$gene,
+    filter(vmh, P < 0.05 & Enrichment > 0)$Gene
+  ),
+  filter(dual, P < 0.05 & Enrichment > 0)$gene_name
+)
+```
+
+```{r, fig.width = 6, fig.height = 5}
+stick_plot(intersect(neuropeptides, common_genes), label_vmh = TRUE)
+```
+
+```{r, fig.width = 6, fig.height = 7}
+fig <- cowplot::plot_grid(plotlist = list(
+  stick_plot(controls) + ylab("") + ylim(-1, 5.65),
+  stick_plot(intersect(neuropeptides, common_genes), label_vmh = TRUE)
+), rel_heights = c(1, 5), ncol = 1)
+
+```
+
+\pagebreak
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

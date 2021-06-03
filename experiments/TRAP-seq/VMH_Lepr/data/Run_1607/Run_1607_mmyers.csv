@@ -1,0 +1,37 @@
+[Header],,,,,,,,,
+IEMFileVersion,4,,,,,,,,
+Investigator Name,mmyers,,,,,,,,
+Experiment Name,Run_1607,,,,,,,,
+Date,Aug 10 2016  6:10PM,,,,,,,,
+Workflow,GenerateFASTQ,,,,,,,,
+Application,HiSeq FASTQ Only,,,,,,,,
+Assay,TruSeq LT,,,,,,,,
+Description,Run_1607,,,,,,,,
+Chemistry,Default,,,,,,,,
+,,,,,,,,,
+[Reads],,,,,,,,,
+52,,,,,,,,,
+,,,,,,,,,
+,,,,,,,,,
+[Settings],,,,,,,,,
+,,,,,,,,,
+[Data],,,,,,,,,
+Lane,Sample_ID,Sample_Name,Sample_Plate,Sample_Well,I7_Index_ID,index,index2,Sample_Project,Description
+1,Sample_63752,63752_TTAGGC,,,,TTAGGC,,mmyers,MChowPBSB
+1,Sample_63754,63754_GATCAG,,,,GATCAG,,mmyers,FChowPBSB
+5,Sample_66853,66853_GTGGCC,,,,GTGGCC,,mmyers,VMHCRPBSLepR
+5,Sample_66854,66854_AGTCAA,,,,AGTCAA,,mmyers,VMHCRPBSNon
+5,Sample_66855,66855_GTCCGC,,,,GTCCGC,,mmyers,VMHCRLepLepR
+5,Sample_66856,66856_ACAGTG,,,,ACAGTG,,mmyers,VMHCRLepNon
+5,Sample_66857,66857_GCCAAT,,,,GCCAAT,,mmyers,VMHCCKBRCCK
+5,Sample_66858,66858_ATGTCA,,,,ATGTCA,,mmyers,VMHCCKBRNon
+5,Sample_66859,66859_CGTACG,,,,CGTACG,,mmyers,ARCCRChowNon1
+5,Sample_66860,66860_ATTCCT,,,,ATTCCT,,mmyers,ARCCRChowNon2
+6,Sample_66853,66853_GTGGCC,,,,GTGGCC,,mmyers,VMHCRPBSLepR
+6,Sample_66854,66854_AGTCAA,,,,AGTCAA,,mmyers,VMHCRPBSNon
+6,Sample_66855,66855_GTCCGC,,,,GTCCGC,,mmyers,VMHCRLepLepR
+6,Sample_66856,66856_ACAGTG,,,,ACAGTG,,mmyers,VMHCRLepNon
+6,Sample_66857,66857_GCCAAT,,,,GCCAAT,,mmyers,VMHCCKBRCCK
+6,Sample_66858,66858_ATGTCA,,,,ATGTCA,,mmyers,VMHCCKBRNon
+6,Sample_66859,66859_CGTACG,,,,CGTACG,,mmyers,ARCCRChowNon1
+6,Sample_66860,66860_ATTCCT,,,,ATTCCT,,mmyers,ARCCRChowNon2

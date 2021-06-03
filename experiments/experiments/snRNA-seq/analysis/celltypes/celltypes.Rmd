@@ -1,0 +1,188 @@
+---
+title: "Cell types"
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%b %d, %Y')`"
+output: pdf_document
+geometry: margin=0.5in
+---
+
+Using the Campbell et al. dataset of the arcuate nucleus and the Chen et al. dataset of the whole hypothalamus to get marker genes for each cell type. I'll then save the summary data to use on future datasets to predict cell types for individual cells and populations.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(Seurat)
+library(knitr); library(kableExtra)
+options(bitmapType = "cairo")
+options(future.globals.maxSize = 6000 * 1024^2)
+map(list.files("../../../../tools/dropseq3/R", full.names = TRUE), source)
+```
+
+```{r read}
+print("Reading in data ...")
+# - Campbell data -------------------------------------------------------------
+campbell <- read_tsv("data/GSE93374/GSE93374_cell_metadata.txt.gz")
+# read in matrix (but there's a 1-column shift in the column names)
+col_names <- read_tsv(
+  "data/GSE93374/GSE93374_Merged_all_020816_DGE.txt.gz",
+  n_max = 1, col_names = FALSE
+)
+arc <- read_tsv("data/GSE93374/GSE93374_Merged_all_020816_DGE.txt.gz",
+                skip = 1, col_names = FALSE)
+arc <- as.data.frame(arc) %>% column_to_rownames("X1")
+colnames(arc) <- col_names
+# make sparse matrix
+arc <- Matrix::Matrix(as.matrix(arc), sparse = TRUE)
+arc <- arc[, campbell$`1.ID`]
+
+
+# - Chen data -----------------------------------------------------------------
+# read in data
+hypo <- read_tsv("data/GSE87544/GSE87544_Merged_17samples_14437cells_count.txt.gz")
+chen <- read_csv("data/GSE87544/GSE87544_1443737Cells.SVM.cluster.identity.renamed.csv.gz")
+# make data sparse matrix
+hypo <- as.data.frame(hypo) %>% column_to_rownames("Gene")
+hypo <- Matrix::Matrix(as.matrix(hypo), sparse = TRUE)
+# make the same cell order
+hypo <- hypo[, chen$Cell_ID_temp]
+```
+
+There are `r ncol(arc)` cells in the Campbell et al. dataset and `r ncol(hypo)` cells in Chen et al. dataset.
+
+```{r make-seurat}
+print("Making Seurat object ...")
+# create Seurat objects
+arc <- CreateSeuratObject(arc)
+hypo <- CreateSeuratObject(hypo)
+```
+
+```{r add-clusters}
+print("Assigning cell type from each paper ...")
+# Campbell clusters
+arc_clusters <- factor(campbell$`7.clust_all`)
+# change names to simpler
+arc_recode <- campbell$`All Cell Clusters`
+arc_recode <- arc_recode[!is.na(arc_recode)]
+arc_recode_names <- str_extract(arc_recode, "a[0-9]+")
+arc_recode <- str_extract(arc_recode, "(?<=\\.).+")
+arc_recode <- str_replace(arc_recode, "[0-9]$", "")
+names(arc_recode) <- arc_recode_names
+arc_clusters <- recode(arc_clusters, !!!arc_recode)
+names(arc_clusters) <- campbell$`1.ID`
+
+# Chen clusters
+hypo_clusters <- chen$SVM_clusterID
+hypo_clusters <- ifelse(str_detect(hypo_clusters, "^[G,H,z]"), "Neuron", hypo_clusters)
+names(hypo_clusters) <- chen$Cell_ID_temp
+hypo_clusters <- factor(hypo_clusters)
+```
+
+There are `r length(unique(arc_clusters))` cell types in the Campbell et al. dataset and `r length(unique(hypo_clusters))` cell types in the Chen et al. dataset.
+
+```{r cellex}
+print("Finding marker genes with CELLEX ...")
+arc_markers <- cellex(as.data.frame(as.matrix(arc)), arc_clusters)
+hypo_markers <- cellex(as.data.frame(as.matrix(hypo)), hypo_clusters)
+```
+
+There are `r nrow(arc_markers)` markers found in the Campbell et al. dataset and `r nrow(hypo_markers)` markers found in Chen et al. dataset.
+
+
+```{r}
+plot_markers <- function(markers) {
+  df <- apply(markers, 2, function(x) sum(x > 0)) %>% as.data.frame()
+  df <- rownames_to_column(df, "Class")
+  ggplot(df, aes(x = Class, y = `.`)) +
+    geom_col(color = "black", fill = "gray80") +
+    theme_classic() +
+    xlab(NULL) +
+    ylab("Markers") +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  plot_markers(arc_markers), plot_markers(hypo_markers)
+))
+```
+
+```{r}
+shared <- intersect(rownames(arc_markers), rownames(hypo_markers))
+```
+
+There are `r length(shared)` marker genes shared between the 2 datasets.
+
+```{r, fig.width = 3.5, fig.height = 3}
+orthologs <- expand.grid(colnames(arc_markers), colnames(hypo_markers))
+orthologs$corr <- apply(orthologs, 1, function(x) {
+  cor(arc_markers[shared, x["Var1"]], hypo_markers[shared, x["Var2"]])
+})
+
+ggplot(orthologs, aes(x = Var1, y = Var2, fill = corr)) +
+  geom_tile() +
+  scale_fill_gradient2(name = "r") +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(hjust = 1),
+        legend.key.width = unit(0.02, "in"))
+```
+
+I'm going to keep the cell type pairs that have a correlation > 0.7.
+
+```{r}
+pairs <- filter(orthologs, corr > 0.7)
+```
+
+That leaves `r nrow(pairs)` cell types that are common and orthologous in the 2 datasets. I'll use the harmonic mean of the CELLEX score for the 2 datasets and cell types and save that as my reference for future cell type mapping.
+
+```{r}
+harmonic_mean <- function(x) ((sum(x^-1))/length(x))^-1
+reshape <- function(markers) {
+  as.data.frame(markers) %>%
+    rownames_to_column("Gene") %>%
+    pivot_longer(-Gene, names_to = "Cluster", values_to = "ESmu") %>%
+    filter(Gene %in% shared)
+}
+arc_markers <- reshape(arc_markers)
+arc_markers <- rename(arc_markers, "Arc_Cluster" = Cluster, "Arc_Score" = ESmu)
+hypo_markers <- reshape(hypo_markers)
+hypo_markers <- rename(hypo_markers, "Hypo_Cluster" = Cluster, "Hypo_Score" = ESmu)
+
+markers <- inner_join(arc_markers, hypo_markers, by = "Gene")
+
+markers <- filter(markers, paste(Arc_Cluster, Hypo_Cluster) %in% paste(pairs$Var1, pairs$Var2))
+markers <- markers %>% group_by(Gene, Arc_Cluster, Hypo_Cluster) %>%
+  mutate("Score" = harmonic_mean(c(Arc_Score, Hypo_Score))) %>%
+  ungroup()
+markers <- filter(markers, Score > 0)
+```
+
+Saving file as `markers.csv` in broad format.
+
+```{r}
+# saving as matrix for easier downstream analysis
+new_names <- c(
+  `Astrocyte` = "Astro",
+  `EndothelialCells` = "Endo",
+  `Ependymocytes` = "Ependymo",
+  `MuralCells` = "Mural",
+  `Neurons` = "Neuron",
+  `NG2/OPC` = "OPC",
+  `Oligodend` = "Oligo",
+  `PVMMicro` = "Micro",
+  `Tanycyte` = "Tany"
+)
+
+markers$Arc_Cluster <- recode(markers$Arc_Cluster, !!!new_names)
+
+broad <- select(markers, Gene, Arc_Cluster, Score) %>%
+  pivot_wider(names_from = "Arc_Cluster", values_from = "Score")
+write.csv(broad, "markers.csv", na = "0", row.names = FALSE)
+```
+
+\pagebreak
+
+# Session info
+```{r}
+sessionInfo()
+```

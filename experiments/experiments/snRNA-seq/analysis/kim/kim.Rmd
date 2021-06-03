@@ -1,0 +1,648 @@
+---
+title: "Kim et al."
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%b %d, %Y')`"
+geometry: margin=0.5in
+output: pdf_document
+---
+
+Analyzing VMH Drop-seq data from [Kim et al. 2019](https://doi.org/10.1016/j.cell.2019.09.020).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.align = "center")
+library(tidyverse)
+library(Seurat)
+library(knitr); library(kableExtra)
+options(bitmapType = "cairo")
+options(future.globals.maxSize = 3000 * 1024^2)
+map(list.files("../../../../tools/dropseq3/R", full.names = TRUE), source)
+```
+
+```{r}
+dir <- list.files("../../data/ypx3sw2f7c-2", recursive = TRUE, full.names = TRUE)
+unique_experiments <- unique(str_extract(dir, "(.+)(?=\\/barcodes)"))
+unique_experiments <- unique_experiments[!is.na(unique_experiments)]
+samples <- str_extract(unique_experiments, "(?<=\\/)([0-9_]+)$")
+```
+
+```{r}
+read_10X <- function(dir, features_name = "genes.tsv.gz", gene_col = 2,
+                     verbose = FALSE) {
+  if (verbose) print(paste("Reading", dir, "..."))
+  files <- list.files(dir, full.names = TRUE)
+  genes <- read_tsv(files[str_detect(files, features_name)], col_names = FALSE)
+  genes <- pull(genes, !!paste0("X", gene_col))
+  cells <- read_tsv(files[str_detect(files, "barcodes")], col_names = FALSE)
+  mtx <- Matrix::readMM(files[str_detect(files, "matrix")])
+  colnames(mtx) <- cells$X1
+  if (any(duplicated(genes))) {
+    dup_genes <- unique(genes[duplicated(genes)])
+    if (verbose) { print(paste("Removing", length(dup_genes),
+                               "duplicate genes ..."))}
+    keep_idx <- sapply(dup_genes, function(x) {
+      idx <- which(genes == x)
+      total <- Matrix::rowSums(mtx[idx, ])
+      idx[total == max(total)][1]
+    })
+    keep_idx <- c(keep_idx, which(!genes %in% dup_genes))
+    mtx <- mtx[keep_idx, ]
+    rownames(mtx) <- genes[keep_idx]
+  }
+  return(mtx)
+}
+
+mtx <- pbapply::pblapply(unique_experiments, read_10X)
+```
+
+The Kim et al. dataset has `r format(sum(map_int(mtx, ncol)), big.mark = ",")` cells from `r length(samples)` samples:
+
+```{r}
+data.frame(
+  "Sample" = samples,
+  "Cells" = map_int(mtx, ncol)
+) %>%
+  kable(caption = "Samples") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+# Quality control
+## Keeping high quality genes
+I'm keeping only genes expressed in at least 4 cells and present in all `r length(mtx)` samples.
+
+```{r genes-filtering}
+print(paste("Starting with", max(map_int(mtx, nrow)), "genes ..."))
+mtx <- keep_shared_genes(mtx)
+mtx <- remove_unwanted_genes(mtx)
+mtx <- remove_low_abundance_genes(mtx)
+print(paste("Now", max(map_int(mtx, nrow)), "genes."))
+```
+
+## Keeping high quality cells
+I'm going to remove any cells that have fewer than 500 genes detected.
+
+```{r filter-cells}
+print(paste("Starting with", sum(map_int(mtx, ncol)), "cells ..."))
+mtx <- filter_cells(mtx)
+mtx <- rename_duplicates(mtx)
+print(paste("Now", sum(map_int(mtx, ncol)), "cells."))
+```
+
+```{r create-seurat, include = FALSE}
+# combine into Seurat object
+srt <- CreateSeuratObject(do.call(cbind, mtx))
+
+# add metadata
+srt$Sample <- rep(samples, times = map_dbl(mtx, ncol))
+rm(mtx, samples)
+gc()
+```
+
+
+## Quality control
+```{r, fig.width = 7.5, fig.height = 2}
+data.frame(
+  "Genes" = srt$nFeature_RNA,
+  "UMIs" = srt$nCount_RNA,
+  "Sample" = srt$Sample
+) %>%
+  pivot_longer(-Sample, names_to = "measure", values_to = "value") %>%
+  ggplot(aes(x = Sample, y = value, fill = Sample)) +
+  geom_violin(show.legend = FALSE, scale = "width") +
+  scale_y_continuous(trans = "log2") +
+  theme_void() +
+  theme(axis.text.x = element_text(color = "black", angle = 90,
+                                   hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(color = "black")) +
+  facet_wrap(~measure, scales = "free_y")
+```
+
+```{r}
+remove_cells <- Cells(srt)[str_detect(srt$Sample, "2018_08")]
+```
+
+Samples from 2018_08 seem to be very low depth in both genes and UMIs detected. I'm going to remove these (`r format(length(remove_cells), big.mark = ",")` cells.)
+
+```{r}
+print("Removing cells ...")
+srt <- subset(srt, cells = Cells(srt)[!Cells(srt) %in% remove_cells])
+rm(remove_cells)
+```
+
+There are now `r format(ncol(srt), big.mark = ",")` cells remaining.
+
+```{r, include = FALSE}
+gc()
+```
+
+\pagebreak
+
+# Identifying cell types
+My main goal is simply to identify neurons for downstream analysis, but I'm going to predict cell type for each cell and cluster all cells so we'll have the data in case we want to look at glia.
+
+Pipeline:
+1. Normalizing data with `scran` `r packageVersion("scran")` for each run independently
+2. Finding variable genes with `Seurat`
+3. Scaling variable genes for each sample independently
+4. Running PCA on scaled data
+5. Choosing PCs from the elbow on the scree plot
+6. Projecting into UMAP space
+
+```{r process-all, include = FALSE}
+srt <- normalize_data(srt, method = "scran")
+srt <- FindVariableFeatures(srt)
+srt <- scale_data(srt, genes = srt@assays$RNA@var.features, groups = "Sample")
+srt <- RunPCA(srt, npcs = 100)
+srt@reductions$pca@misc$sig_pcs <- knee_test(srt)
+srt <- RunUMAP(srt, dims = 1:srt@reductions$pca@misc$sig_pcs)
+gc()
+```
+
+Results: using `r length(srt@assays$RNA@var.features)` variable genes and `r srt@reductions$pca@misc$sig_pcs` PCs.
+
+```{r dimplot-sample-all, fig.height = 3, fig.width = 4}
+DimPlot(srt, group.by = "Sample", cells = sample(Cells(srt), 20000)) +
+  theme_void() +
+  theme(legend.text = element_text(size = 7),
+        plot.title = element_blank())
+```
+
+This looks great, continuing with identifying cell types.
+
+\pagebreak
+
+# Predicting cell types
+I'm going to use published scRNA-seq data (from Campbell et al. and Chen et al.) to infer cell types in our dataset. In short, I'll use the top marker genes from each celltype in those dataset to assign a score to each cell in our dataset. Then, I'll cluster our cells and assign celltype membership based on the score, plus whether they are a presumptive doublet (from the `scrublet` package). I'll refer to doublets & unclassifed cells as NA.
+
+```{r}
+print("Clustering ...")
+```
+
+```{r cluster-all, include = FALSE}
+srt <- FindNeighbors(srt, dims = 1:srt@reductions$pca@misc$sig_pcs)
+srt <- FindClusters(srt)
+```
+
+There are `r length(unique(srt@active.ident))` clusters.
+
+```{r, include = FALSE}
+# find cluster markers
+cluster_order <- order_clusters(srt, srt@assays$RNA@var.features)
+srt@active.ident <- factor(
+  srt@active.ident,
+  levels = cluster_order,
+  labels = 1:length(cluster_order)
+)
+srt$seurat_clusters <- srt@active.ident
+```
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+DimPlot(srt, label = TRUE, cells = sample(Cells(srt), 20000)) +
+  theme_void() +
+  theme(legend.position = "none")
+```
+
+```{r find-celltypes}
+print("Predicting cell type membership ...")
+markers <- read_csv("../celltypes/markers.csv")
+# only keep markers in the Seurat object
+markers <- filter(markers, !is.na(Gene))
+markers <- filter(markers, Gene %in% rownames(srt))
+markers <- filter(markers, !duplicated(Gene))
+markers <- as.data.frame(markers) %>% column_to_rownames("Gene")
+
+# get top 100 markers for each cell type
+top_markers <- apply(markers, 2, function(x) {
+  names(x) = rownames(markers)
+  sort(x, decreasing = TRUE)[1:100] %>% names()
+})
+
+# scale data for top markers
+srt <- scale_data(srt, genes = c(top_markers), groups = "Sample"); gc()
+
+if (ncol(srt) > 10000) {
+  cells <- sample(Cells(srt), 10000)
+} else {
+  cells <- Cells(srt)
+}
+scaled <- srt@assays$RNA@scale.data[, cells]
+
+# predict celltype by max cumsum for scaled marker genes
+get_celltype <- function(cell) {
+  scores <- sapply(colnames(top_markers), function(x) {
+    max(cumsum(scaled[top_markers[, x], cell]), na.rm = TRUE)  
+  })
+  if (max(scores, na.rm = TRUE) < 0) {
+    "Unclassified"
+  } else {
+    names(scores)[scores == max(scores)]
+  }
+}
+celltypes <- sapply(cells, get_celltype)
+
+# call celltype by cluster
+cluster_table <- table(srt@active.ident[cells], celltypes)
+cluster_celltypes <- apply(cluster_table, 1, function(x) {
+  if (any(x > sum(x)/2)) {
+    names(x)[x == max(x)]
+  } else {
+    "Mixed"
+  }
+})
+srt$Celltype <- recode(srt@active.ident, !!!cluster_celltypes)
+```
+
+```{r}
+table(srt$Celltype) %>%
+  as.data.frame() %>%
+  mutate("Percent" = round(Freq / sum(Freq) * 100, 1)) %>%
+  arrange(desc(Percent)) %>%
+  rename("Cells" = Var1, "N" = Freq) %>%
+  kable(caption = "Cell type breakdown") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+```{r, fig.width = 6, fig.height = 3}
+srt@active.ident <- factor(srt$Celltype)
+cluster_order <- order_clusters(srt, unique(c(top_markers)))
+srt@active.ident <- factor(srt@active.ident, levels = cluster_order)
+
+cowplot::plot_grid(plotlist = list(
+  DimPlot(srt, label = TRUE, cells = sample(Cells(srt), 10000)) +
+    theme_void() +
+    theme(legend.position = "none"),
+  table(srt$Sample, srt@active.ident) %>%
+    as.data.frame() %>%
+    mutate(Var1 = factor(Var1, levels = unique(srt$Sample))) %>%
+    group_by(Var1) %>%
+    mutate("Percent" = Freq / sum(Freq) * 100) %>%
+    ggplot(aes(x = Var1, y = Percent, fill = Var2)) +
+    geom_col() +
+    xlab(NULL) +
+    ylab("% of dataset") +
+    scale_y_continuous(expand = c(0, 0)) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5,
+                                     color = "black", size = 8),
+          axis.text.y = element_text(size = 7),
+          axis.title.y = element_text(size = 8),
+          legend.key.width = unit(0.08, "in"),
+          legend.key.height = unit(0.04, "in"),
+          legend.text = element_text(size = 7))
+))
+```
+
+Good balance of cell types across all samples.
+
+---
+
+I'm saving the all-cell object as `kim.rds` and I'll move on to just neuron analysis.
+
+```{r}
+saveRDS(srt, "kim.rds")
+```
+
+\pagebreak
+
+# Neurons
+There are `r format(sum(srt@active.ident == "Neuron"), big.mark = ",")` neurons. I'll process them separately now to identify neuronal populations.
+
+```{r, include = FALSE}
+neurons <- subset(srt, idents = "Neuron")
+rm(srt); gc()
+```
+
+Pipeline:
+1. Finding variable genes with `Seurat`
+2. Running `sctransform` with Run as a batch variable.
+2. Scaling variable genes (in both RNA and SCT assays) for each sample independently
+3. Running PCA on scaled data
+4. Choosing PCs from the elbow on the scree plot
+5. Projecting into UMAP space
+
+```{r, include = FALSE}
+neurons <- FindVariableFeatures(neurons)
+neurons <- SCTransform(neurons, conserve.memory = TRUE)
+var_genes <- intersect(
+  neurons@assays$RNA@var.features, neurons@assays$SCT@var.features
+)
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(neurons) <- "RNA"
+neurons <- scale_data(neurons, genes = var_genes, groups = "Sample")
+neurons <- RunPCA(neurons, npcs = 100)
+neurons@reductions$pca@misc$sig_pcs <- knee_test(neurons)
+neurons <- RunUMAP(neurons, dims = 1:neurons@reductions$pca@misc$sig_pcs)
+
+umap_object <- neurons[["umap"]]
+pca_object <- neurons[["pca"]]
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(neurons) <- "SCT"
+neurons <- RunPCA(neurons, npcs = 100)
+neurons@reductions$pca@misc$sig_pcs <- knee_test(neurons)
+neurons <- RunUMAP(neurons, dims = 1:neurons@reductions$pca@misc$sig_pcs)
+
+gc()
+```
+
+Results: Using `r length(neurons@assays$RNA@var.features)` variable genes from `Seurat` found `r length(neurons@assays$SCT@var.features)` from `sctransform`.  The `Seurat` variable features resulted in `r pca_object@misc$sig_pcs` PCs, and the `sctransform` variable genes resulted in `r neurons@reductions$pca@misc$sig_pcs` PCs.
+
+```{r, fig.width = 7, fig.height = 3.2}
+plot_umap_samples <- function(umap) {
+  df <- bind_cols(as.data.frame(umap), neurons$Sample)
+  df <- df[sample(1:nrow(df), 10000), ]
+  ggplot(df, aes(x = UMAP_1, y = UMAP_2, color = `...3`)) +
+    geom_point(stroke = 0, size = 1) +
+    theme_void() +
+    theme(legend.text = element_text(size = 7),
+          plot.title = element_text(size = 10, hjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  plot_umap_samples(umap_object@cell.embeddings) + ggtitle("RNA"),
+  plot_umap_samples(neurons@reductions$umap@cell.embeddings) + ggtitle("SCT")
+))
+```
+
+
+\pagebreak
+
+# Identifying VMH neurons
+*Fezf1* and *Nr5a1* are VMH marker genes.
+
+```{r, fig.width = 1.5, fig.height = 3}
+data.frame(
+  "cell" = colnames(neurons),
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[,2],
+  "Nr5a1" = neurons@assays$RNA@data["Nr5a1", ],
+  "Fezf1" = neurons@assays$RNA@data["Fezf1", ]
+) %>%
+  sample_n(5000) %>%
+  gather(-cell, -UMAP1, -UMAP2, key = "gene", value = "expr") %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = expr)) +
+  geom_point(stroke = 0, size = 1) +
+  scale_color_gradient(low = "gray90", high = "navyblue",
+                       name = "Normalized\nexpression") +
+  theme_void() +
+  facet_wrap(~gene, ncol = 1) +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.15, "in"))
+```
+
+It seems clear there's a distinct lobe that corresponds to the VMH populations, but I'll confirm this with the *Nr5a1* TRAP-seq.
+
+```{r, fig.width = 1.5, fig.height = 1.5}
+print("Reading in Nr5a1-Cre TRAP-seq data ...")
+sf1 <- read_csv("../../../TRAP-seq/VMH_Nr5a1/results.csv")
+sf1_score <- eigengene(neurons, filter(sf1, P < 0.05 & Enrichment > log2(1) & Bead > 10)$Gene)
+neurons$Sf1 <- sf1_score
+```
+
+```{r, fig.width = 4, fig.height = 3}
+data.frame(
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[,2],
+  "score" = sf1_score
+) %>%
+  sample_n(5000) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = score)) +
+  geom_point(stroke = 0) +
+  theme_void() +
+  scale_color_gradient2(name = expression(underline("Sf1 score")))
+```
+
+## Clusters
+Clustering using `r round(sqrt(ncol(neurons)), 0)` neighbors and resolution = 1.
+
+```{r}
+neurons <- FindNeighbors(neurons)
+neurons <- FindClusters(neurons)
+```
+
+```{r}
+cluster_order <- order_clusters(neurons, neurons@assays$SCT@var.features)
+neurons@active.ident <- factor(
+  neurons@active.ident,
+  levels = cluster_order,
+  labels = seq(length(cluster_order))
+)
+```
+
+```{r, fig.width = 7.5, fig.height = 3}
+data.frame(
+  "cluster" = neurons@active.ident,
+  "score" = sf1_score
+) %>%
+  ggplot(aes(x = cluster, y = score)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_violin(aes(fill = cluster), show.legend = FALSE, scale = "width") +
+  ylab("Sf1 score") +
+  theme_void() +
+  theme(axis.text = element_text(),
+        axis.text.y = element_text(),
+        axis.title.y = element_text(angle = 90, hjust = 0.5, vjust = 0.5))
+```
+
+```{r}
+vmh_clusters <- 12:19
+```
+
+VMH clusters correspond to `r paste(vmh_clusters, collapse = ", ")`.
+
+---
+
+Saving the `neurons` Seurat object as `neurons.rds`
+
+```{r}
+saveRDS(neurons, "neurons.rds")
+```
+
+\pagebreak
+
+# Preprocessing VMH neurons
+Now clustering VMH alone. I saw a noticeable effect of sequencing depth in the `neurons` object, so I'm going to run the same clustering pipeline, but this time regressing out the number of genes in the scaled data to correct for this.
+
+```{r, include = FALSE}
+vmh <- subset(neurons, idents = vmh_clusters)
+rm(neurons); gc()
+```
+Pipeline:
+1. Finding variable genes with `Seurat`
+2. Running `sctransform` with Run as a batch variable.
+2. Scaling variable genes (in both RNA and SCT assays) for each sample independently
+3. Running PCA on scaled data
+4. Choosing PCs from the elbow on the scree plot
+5. Projecting into UMAP space
+
+```{r, include = FALSE}
+vmh <- FindVariableFeatures(vmh)
+vmh <- SCTransform(vmh, conserve.memory = TRUE)
+var_genes <- intersect(
+  vmh@assays$RNA@var.features, vmh@assays$SCT@var.features
+)
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(vmh) <- "RNA"
+vmh <- ScaleData(vmh, vars.to.regress = c("nFeature_RNA", "Sample"))
+vmh <- RunPCA(vmh, npcs = 100)
+vmh@reductions$pca@misc$sig_pcs <- knee_test(vmh)
+vmh <- RunUMAP(vmh, dims = 1:vmh@reductions$pca@misc$sig_pcs)
+
+umap_object <- vmh[["umap"]]
+pca_object <- vmh[["pca"]]
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(vmh) <- "SCT"
+vmh <- RunPCA(vmh, npcs = 100)
+vmh@reductions$pca@misc$sig_pcs <- knee_test(vmh)
+vmh <- RunUMAP(vmh, dims = 1:vmh@reductions$pca@misc$sig_pcs)
+
+gc()
+```
+
+Results: Using `r length(neurons@assays$RNA@var.features)` variable genes from `Seurat` found `r length(neurons@assays$SCT@var.features)` from `sctransform`.  The `Seurat` variable features resulted in `r pca_object@misc$sig_pcs` PCs, and the `sctransform` variable genes resulted in `r neurons@reductions$pca@misc$sig_pcs` PCs.
+
+```{r, fig.width = 7, fig.height = 3.2}
+plot_umap_samples <- function(umap) {
+  df <- bind_cols(as.data.frame(umap), vmh$Sample)
+  df <- df[sample(1:nrow(df), 10000), ]
+  ggplot(df, aes(x = UMAP_1, y = UMAP_2, color = `...3`)) +
+    geom_point(stroke = 0, size = 1) +
+    theme_void() +
+    theme(legend.text = element_text(size = 7),
+          plot.title = element_text(size = 10, hjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  plot_umap_samples(umap_object@cell.embeddings) + ggtitle("RNA"),
+  plot_umap_samples(vmh@reductions$umap@cell.embeddings) + ggtitle("SCT")
+))
+```
+
+**RNA** seems better, and shows no obvious batch effects, continuing with that.
+
+\pagebreak
+
+# Clustering VMH neurons
+
+```{r}
+metadata <- read_csv("../../data/ypx3sw2f7c-2/10x_VMH_metadata.csv")
+```
+
+```{r}
+resolutions <- seq(0.2, 2, by = 0.2)
+print(paste("Finding clusters for resolutions", paste(resolutions, collapse = ", "), "..."))
+```
+
+```{r, include = FALSE}
+sig_pcs <- vmh@reductions$pca@misc$sig_pcs
+vmh <- FindNeighbors(vmh, dims = 1:sig_pcs)
+
+clusters <- map_dfc(
+  resolutions,
+  ~ FindClusters(vmh, resolution = .x)@active.ident
+)
+gc()
+# get dissimilarity matrix
+cells <- sample(Cells(vmh), 10000)
+distances <- cluster::daisy(
+  vmh@reductions$pca@cell.embeddings[cells, 1:sig_pcs]
+)
+gc()
+
+# calculate silhouette width for each clustering
+mean_widths <- apply(clusters[match(cells, Cells(vmh)), ], 2, function(x) {
+  silhouette_object <- cluster::silhouette(as.numeric(x), distances)
+  summary(silhouette_object)[["avg.width"]]
+})
+
+# choose best resolution based on max mean silhoutte width
+best_resolution <- resolutions[mean_widths == max(mean_widths)]
+
+# add clustering to official ident slot
+vmh@active.ident <- clusters[, resolutions == best_resolution][[1]]
+
+# remove unnecessary object
+rm(resolutions, clusters, sig_pcs, distances, mean_widths); gc()
+```
+
+Using resolution `r best_resolution`, there are `r length(unique(neurons@active.ident))` populations.
+
+
+
+```{r}
+metadata <- read_csv("../../data/ypx3sw2f7c-2/10x_VMH_metadata.csv")
+samples <- read_csv("../../data/ypx3sw2f7c-2/samples.csv") %>%
+  arrange(subfolder) %>%
+  mutate("num" = seq(n()))
+```
+
+```{r, fig.width = 4, fig.height = 4}
+# subregion label
+data.frame(
+  "cell" = rownames(vmh@meta.data),
+  "Sample" = vmh$Sample,
+  "UMAP1" = vmh@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = vmh@reductions$umap@cell.embeddings[,2]
+) %>%
+  left_join(samples, by = c("Sample" = "subfolder")) %>%
+  mutate(cell = str_extract(cell, "^[A-Z]+")) %>%
+  mutate(cell = paste(num, cell, sep = "_")) %>%
+  left_join(metadata, by = c("cell" = "sample_name")) %>%
+  sample_n(5000) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = subregion_label)) +
+  geom_point(stroke = 0) +
+  scale_color_manual(values = c("red4", "blue4"),
+                     na.value = "gray") +
+  theme_void() +
+  theme(legend.position = "none")
+```
+
+```{r, fig.width = 4, fig.height = 4}
+# class label
+data.frame(
+  "cell" = rownames(vmh@meta.data),
+  "Sample" = vmh$Sample,
+  "UMAP1" = vmh@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = vmh@reductions$umap@cell.embeddings[,2]
+) %>%
+  sample_n(5000) %>%
+  left_join(samples, by = c("Sample" = "subfolder")) %>%
+  mutate(cell = str_extract(cell, "^[A-Z]+")) %>%
+  mutate(cell = paste(num, cell, sep = "_")) %>%
+  left_join(metadata, by = c("cell" = "sample_name")) %>%
+  mutate(tv_cluster_label = ifelse(
+    str_detect(tv_cluster_label, "_"),
+    str_extract(tv_cluster_label, "(.+)(?=_)"),
+    tv_cluster_label)
+    ) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = tv_cluster_label)) +
+  geom_point(stroke = 0) +
+  theme_void() +
+  theme(legend.position = "none")
+```
+
+```{r}
+new_metadata <- vmh@meta.data %>%
+  rownames_to_column("cell") %>%
+  left_join(samples, by = c("Sample" = "subfolder")) %>%
+  mutate(cell2 = str_extract(cell, "^[A-Z]+")) %>%
+  mutate(cell2 = paste(num, cell2, sep = "_")) %>%
+  left_join(metadata, by = c("cell2" = "sample_name")) %>%
+  select(-cell2) %>%
+  as.data.frame() %>%
+  column_to_rownames("cell")
+
+vmh@meta.data <- new_metadata
+```
+
+Saving `vmh` object as `vmh.rds`.
+
+```{r}
+saveRDS(vmh, "vmh.rds")
+```

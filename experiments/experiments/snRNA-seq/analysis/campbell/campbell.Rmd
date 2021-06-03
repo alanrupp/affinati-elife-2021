@@ -1,0 +1,702 @@
+---
+title: "Campbell"
+author: "Alan Rupp"
+date: "`r format(Sys.time(), '%b %d, %Y')`"
+output: pdf_document
+geometry: margin=0.5in
+---
+
+Campbell et al. performed Drop-seq targeted to the arcuate nucleus, but they also identified some VMH neurons. I'm going to re-analyze this data to determine if our VMH population designations are present in this dataset.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(Seurat)
+library(knitr); library(kableExtra)
+options(bitmapType = "cairo")
+options(future.globals.maxSize = 6000 * 1024^2)
+map(list.files("../../../../tools/dropseq3/R", full.names = TRUE), source)
+```
+
+```{r, include = FALSE}
+# read in data
+metadata <- read_tsv("../../data/GSE93374/GSE93374_cell_metadata.txt.gz")
+
+# read in matrix (but there's a 1-column shift in the column names)
+dge_file <- "../../data/GSE93374/GSE93374_Merged_all_020816_DGE.txt.gz"
+col_names <- read_tsv(dge_file, n_max = 1, col_names = FALSE)
+mtx <- read_tsv(dge_file, skip = 1, col_names = FALSE)
+mtx <- as.data.frame(mtx) %>% column_to_rownames("X1")
+colnames(mtx) <- col_names
+
+# make sparse matrix
+mtx <- Matrix::Matrix(as.matrix(mtx), sparse = TRUE)
+gc()
+```
+
+There are `r length(unique(metadata[["3.batches"]]))` runs, comprising `r length(unique(metadata[["2.group"]]))` samples and `r format(ncol(mtx), big.mark = ",")` total cells.
+
+```{r}
+# table of samples and total cells
+metadata %>%
+  group_by(`2.group`, `3.batches`) %>%
+  count() %>%
+  rename("Batch" = `3.batches`, "Sample" = `2.group`, "Cells" = n) %>%
+  select(Batch, Sample, Cells) %>%
+  arrange(Batch, Sample) %>%
+  kable(caption = "Samples") %>%
+  kable_styling(full_width = FALSE, latex_options = "hold_position")
+```
+
+```{r}
+# make sure metadata matches matrix organization
+if (!all(colnames(mtx) == metadata$`1.ID`)) mtx <- mtx[ , metadata$`1.ID`]
+```
+
+\pagebreak
+
+# Quality control
+## Keeping high quality genes
+I'm keeping only genes expressed in at least 4 cells and present in all `r length(mtx)` samples.
+
+```{r genes-filtering}
+print(paste("Starting with", nrow(mtx), "genes ..."))
+mtx <- remove_unwanted_genes(mtx)
+mtx <- remove_low_abundance_genes(mtx)
+print(paste("Now", nrow(mtx), "genes."))
+```
+
+## Keeping high quality cells
+I'm going to remove any cells that have fewer than 500 genes detected.
+
+```{r filter-cells}
+print(paste("Starting with", ncol(mtx), "cells ..."))
+mtx <- filter_cells(mtx)
+print(paste("Now", ncol(mtx), "cells."))
+```
+
+Continuing with data analysis.
+
+```{r}
+# create Seurat object and add Campbell neuron cluster names in meta.data
+mtx <- CreateSeuratObject(mtx)
+mtx$Campbell <- factor(metadata$`10.clust_neurons`)
+mtx$Sample <- metadata$`2.group`
+mtx$Batch <- metadata$`3.batches`
+mtx@active.ident <- mtx$Campbell
+```
+
+There are `r ncol(mtx)` total cells, but I'm only interested in the neurons (specifically the VMH neurons). Campbell et al. annotated the neurons as VMH or not, but I'll use the same method of looking for *Nr5a1-Cre* TRAP-seq associated clusters to make sure they didn't miss any.
+
+
+```{r}
+neurons <- metadata$`1.ID`[metadata$`10.clust_neurons` != "miss"]
+mtx <- subset(mtx, cells = neurons)
+```
+
+I removed all non-neurons, leaving `r ncol(mtx)` neurons for downstream processing.
+
+\pagebreak
+
+# Projecting neurons into UMAP space
+The clusters are already annotated by Campbell et al., so I'll simply preprocess the data in my standard pipeline and make sure those clusters separate in UMAP space.
+
+Pipeline:
+1. Finding variable genes with `Seurat`
+2. Running `sctransform` with Run as a batch variable.
+2. Scaling variable genes (in both RNA and SCT assays) for each sample independently
+3. Running PCA on scaled data
+4. Choosing PCs from the elbow on the scree plot
+5. Projecting into UMAP space
+
+```{r, include = FALSE}
+mtx <- FindVariableFeatures(mtx)
+mtx <- SCTransform(mtx, conserve.memory = TRUE, batch_var = "Batch")
+var_genes <- intersect(
+  mtx@assays$RNA@var.features, mtx@assays$SCT@var.features
+)
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(mtx) <- "RNA"
+mtx <- scale_data(mtx, genes = var_genes, groups = "Sample")
+mtx <- RunPCA(mtx, npcs = 100)
+mtx@reductions$pca@misc$sig_pcs <- knee_test(mtx)
+mtx <- RunUMAP(mtx, dims = 1:mtx@reductions$pca@misc$sig_pcs)
+
+umap_object <- mtx[["umap"]]
+pca_object <- mtx[["pca"]]
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(mtx) <- "SCT"
+mtx <- RunPCA(mtx, npcs = 100)
+mtx@reductions$pca@misc$sig_pcs <- knee_test(mtx)
+mtx <- RunUMAP(mtx, dims = 1:mtx@reductions$pca@misc$sig_pcs)
+
+gc()
+```
+
+Results: Using `r length(neurons@assays$RNA@var.features)` variable genes from `Seurat` found `r length(neurons@assays$SCT@var.features)` from `sctransform`.  The `Seurat` variable features resulted in `r pca_object@misc$sig_pcs` PCs, and the `sctransform` variable genes resulted in `r neurons@reductions$pca@misc$sig_pcs` PCs.
+
+```{r, fig.width = 7, fig.height = 3.2}
+plot_umap_samples <- function(umap) {
+  df <- bind_cols(as.data.frame(umap), mtx$Sample)
+  df <- df[sample(1:nrow(df), 10000), ]
+  ggplot(df, aes(x = UMAP_1, y = UMAP_2, color = `...3`)) +
+    geom_point(stroke = 0, size = 1) +
+    theme_void() +
+    theme(legend.text = element_text(size = 7),
+          plot.title = element_text(size = 10, hjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  plot_umap_samples(umap_object@cell.embeddings) + ggtitle("RNA"),
+  plot_umap_samples(mtx@reductions$umap@cell.embeddings) + ggtitle("SCT")
+))
+```
+
+The **SCT** assay looks better, cells are more "clumped", even across samples, making it more likely to find clusters.
+
+```{r, include = FALSE}
+rm(umap_object, pca_object)
+gc()
+```
+
+\pagebreak
+
+# Identifying VMH neurons
+*Fezf1* and *Nr5a1* are VMH marker genes.
+
+```{r, fig.width = 1.5, fig.height = 3}
+data.frame(
+  "cell" = colnames(mtx),
+  "UMAP1" = mtx@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = mtx@reductions$umap@cell.embeddings[,2],
+  "Nr5a1" = mtx@assays$RNA@data["Nr5a1", ],
+  "Fezf1" = mtx@assays$RNA@data["Fezf1", ]
+) %>%
+  sample_n(5000) %>%
+  pivot_longer(-c(cell, UMAP1, UMAP2),
+               names_to = "gene", values_to = "expr") %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = expr)) +
+  geom_point(stroke = 0, size = 1) +
+  scale_color_gradient(low = "gray90", high = "navyblue",
+                       name = "Normalized\nexpression") +
+  theme_void() +
+  facet_wrap(~gene, ncol = 1) +
+  theme(legend.position = "bottom", legend.direction = "horizontal",
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 7),
+        legend.key.height = unit(0.03, "in"),
+        legend.key.width = unit(0.15, "in"))
+```
+
+It seems clear there's a distinct lobe that corresponds to the VMH populations, but I'll confirm this with the *Nr5a1* TRAP-seq.
+
+```{r, fig.width = 1.5, fig.height = 1.5}
+print("Reading in Nr5a1-Cre TRAP-seq data ...")
+sf1 <- read_csv("../../../TRAP-seq/VMH_Nr5a1/results.csv")
+```
+
+The *Nr5a1-Cre* TRAP-seq dataset has `r sum(sf1$P < 0.05 & sf1$Enrichment > 0, na.rm = TRUE)` enriched genes.
+
+```{r}
+sf1 <- filter(sf1, Bead > 10 & P < 0.05 & Enrichment > 1)
+mtx <- scale_data(mtx, genes = sf1$Gene, groups = "Sample")
+```
+
+That corresponds to `r nrow(sf1)` genes. I'll use PCA to reduce these enriched genes into a single score for each cell.
+
+```{r}
+sf1 <- filter(sf1, Gene %in% rownames(mtx@assays$SCT@scale.data))
+eigengene <- function(object, genes, assay = "RNA") {
+  # keep genes that have been scaled and are not NA in the scale.data slot
+  genes <- genes[genes %in% rownames(object@assays[[assay]]@scale.data)]
+  if (length(genes) == 1) {
+    return(object@assays[[assay]]@scale.data[genes, ])
+  }
+  pca <- prcomp(t(object@assays[[assay]]@scale.data[genes, ]))
+  if (sign(median(pca$rotation[, 1])) == -1) pca$x[,1] = -pca$x[,1]
+  return(pca$x[, 1])
+}
+
+sf1_score <- eigengene(mtx, sf1$Gene, assay = "SCT")
+```
+
+```{r, fig.width = 1.5, fig.height = 1.6}
+# Figure 1f
+data.frame(
+  "UMAP1" = mtx@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = mtx@reductions$umap@cell.embeddings[,2],
+  "Sf1" = sf1_score
+  ) %>%
+  mutate(Sf1 = ifelse(Sf1 > 10, 10, ifelse(Sf1 < -10, -10, Sf1))) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = Sf1)) +
+    geom_point(stroke = 0, size = 0.5) +
+    theme_void() +
+    scale_color_gradient2(name = "TRAP\nloading",
+                          mid = "gray95") +
+    theme(legend.position = "top", legend.direction = "horizontal",
+          legend.key.height = unit(0.03, "in"),
+          legend.key.width = unit(0.15, "in"),
+          legend.text = element_text(size = 6),
+          legend.title = element_text(size = 6))
+```
+
+This is also consistent with cells that have the most the *Fezf* and *Nr5a1* expression.
+
+## Calling VMH populations
+To do this in an unbiased way, I'll call VMH neurons as clusters that are VGLUT2 (*Slc17a6*)-positive, *Gad1*-negative, either *Fezf1*- or *Nr5a1*-positive, and have a positive *Nr5a1* TRAP score.
+
+```{r}
+mtx <- ScaleData(mtx, c("Slc17a6", "Gad1", "Fezf1", "Nr5a1"))
+marker_means <- cluster_means(mtx, c("Slc17a6", "Gad1", "Fezf1", "Nr5a1"), assay = "SCT")
+vmh_scores <- map_dbl(
+  sort(unique(mtx@active.ident)),
+  ~ median(sf1_score[mtx@active.ident == .x])
+)
+```
+
+```{r}
+vmh_clusters <- colnames(marker_means)[
+  marker_means["Slc17a6", ] > 0 & marker_means["Gad1", ] < 0 &
+  (marker_means["Fezf1", ] > 0 | marker_means["Nr5a1", ] > 0) &
+    vmh_scores > 0
+]
+```
+
+```{r, fig.width = 7.5, fig.height = 0.9}
+marker_means["TRAP", ] <- vmh_scores
+
+marker_means %>% t() %>% as.data.frame() %>%
+  rownames_to_column("cluster") %>%
+  mutate_if(is.numeric, ~ .x > 0) %>%
+  rename("Glutamatergic" = Slc17a6) %>%
+  mutate(Gad1 = !Gad1) %>%
+  rename("not GABAergic" = Gad1) %>%
+  gather(-cluster, key = "measure", value = "result") %>%
+  mutate(measure = factor(measure, levels = c(
+    "Nr5a1", "Fezf1", "Glutamatergic", "not GABAergic", "TRAP"
+  ))) %>%
+  mutate(cluster = factor(cluster, levels = colnames(marker_means))) %>%
+  ggplot(aes(x = cluster, y = fct_rev(measure), fill = result)) +
+  geom_tile(color = "gray20", show.legend = FALSE) +
+  scale_fill_manual(values = c("gray90", "blue4")) +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(hjust = 1, vjust = 0.5))
+```
+
+This correponds to the UMAP clusters of:
+
+```{r, fig.width = 2.5, fig.height = 2.5}
+data.frame(
+  "VMH" = neurons@active.ident %in% vmh_clusters,
+  "UMAP1" = neurons@reductions$umap@cell.embeddings[,1],
+  "UMAP2" = neurons@reductions$umap@cell.embeddings[,2]
+) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = VMH)) +
+  geom_point(stroke = 0, size = 1, show.legend = FALSE) +
+  scale_color_manual(values = c("gray90", "blue4")) +
+  theme_void()
+```
+
+This confirms that clusters `r paste(vmh_clusters, collapse = ", ")` represent the VMH. That is `r format(sum(neurons@active.ident %in% vmh_clusters), big.mark = ",")` neurons, `r round(sum(neurons@active.ident %in% vmh_clusters)/length(neurons@active.ident), 2)*100`% of the total.
+
+```{r, include = FALSE}
+vmh <- subset(neurons, idents = vmh_clusters)
+rm(cluster_names, marker_means, mean_values,
+   neurons, sf1, cluster_colors, cluster_order, sf1_score,
+   vmh_clusters, vmh_scores)
+gc()
+```
+
+Cluster **n28** is called VMH by this method, but it expresses *Qrfp* and seems more likely to be from the neighboring tuberal, so I'll leave it out.
+
+```{r}
+vmh_clusters <- c("n29", "n30")
+```
+
+That seems consistent with our TRAP data. I'll pull clusters `r paste(vmh_clusters, collapse = ", ")` as the VMH and subcluster them. That's `r sum(mtx@active.ident %in% vmh_clusters)` cells.
+
+\pagebreak
+
+# VMH clusters
+```{r}
+vmh <- subset(mtx, idents = vmh_clusters)
+rm(col_names, metadata, mtx, sf1, sf1_genes, sf1_score, vmh_clusters)
+saveRDS(vmh, "vmh.rds")
+```
+
+
+\pagebreak
+
+# Removing outlier cells
+
+Some cells that clustered with VMH populations are not part of the broader VMH in UMAP space. These are likely mis-clustering contaminants. I'll remove them using `DBSCAN` before proceeding with subclustering VMH.
+
+```{r, fig.width = 3, fig.height = 2.5}
+DimPlot(vmh) + theme_void()
+```
+
+```{r}
+neuron_umap <- data.frame(
+  "UMAP1" = vmh@reductions$umap@cell.embeddings[, 1],
+  "UMAP2" = vmh@reductions$umap@cell.embeddings[, 2]
+)
+
+# running DBSCAN to find outliers in UMAP space
+dbscan::kNNdistplot(neuron_umap)
+title("Choosing episilon")
+abline(a = 0.4, b = 0)
+
+clusters <- dbscan::dbscan(neuron_umap, eps = 0.4)
+```
+
+`DBSCAN` finds `r length(unique(clusters$cluster)[unique(clusters$cluster) != 0])` clusters, not counting 1 outlier cluster (in dark green):
+
+```{r, fig.width = 2, fig.height = 2}
+neuron_umap %>%
+  mutate(k = clusters$cluster) %>%
+  ggplot(aes(x = UMAP1, y = UMAP2, color = factor(k))) +
+  geom_point(show.legend = FALSE, stroke = 0, size = 0.8) +
+  scale_color_manual(values = wesanderson::wes_palette("Chevalier1")) +
+  theme_void()
+```
+
+`r sum(clusters$cluster[clusters$cluster == 1])` of the neurons fall into the largest cluster (`r round(sum(clusters$cluster[clusters$cluster == 1])/length(clusters$cluster)*100, 1)`% of the total). I'll just keep these for future processing.
+
+I'll save the outlier cells as `vmh_outliers.rds` in case I want them in the future.
+
+```{r}
+inliers <- Cells(vmh)[clusters$cluster == 1]
+outliers <- Cells(vmh)[clusters$cluster != 1]
+saveRDS(subset(vmh, cells = outliers), "vmh_outliers.rds")
+vmh <- subset(vmh, cells = inliers)
+```
+
+\pagebreak
+
+# Preprocessing VMH neurons
+
+There are `r format(ncol(vmh), big.mark = ",")` VMH neurons. I'll process them separately now to identify neuronal populations.
+
+Pipeline:
+1. Finding variable genes with `Seurat`
+2. Running `sctransform` with Run as a batch variable.
+2. Scaling variable genes (in both RNA and SCT assays) for each sample independently
+3. Running PCA on scaled data
+4. Choosing PCs from the elbow on the scree plot
+5. Projecting into UMAP space
+
+```{r, include = FALSE}
+vmh <- FindVariableFeatures(vmh)
+vmh <- SCTransform(vmh, conserve.memory = TRUE, batch_var = "Run")
+var_genes <- intersect(
+  vmh@assays$RNA@var.features, vmh@assays$SCT@var.features
+)
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(vmh) <- "RNA"
+vmh <- scale_data(vmh, genes = var_genes, groups = "Sample")
+vmh <- RunPCA(vmh, npcs = 100)
+vmh@reductions$pca@misc$sig_pcs <- knee_test(vmh)
+vmh <- RunUMAP(vmh, dims = 1:vmh@reductions$pca@misc$sig_pcs)
+
+umap_object <- vmh[["umap"]]
+pca_object <- vmh[["pca"]]
+
+# compare RNA and SCT assays for batch effects
+DefaultAssay(vmh) <- "SCT"
+vmh <- RunPCA(vmh, npcs = 100)
+vmh@reductions$pca@misc$sig_pcs <- knee_test(vmh)
+vmh <- RunUMAP(vmh, dims = 1:vmh@reductions$pca@misc$sig_pcs)
+
+gc()
+```
+
+Results: Using `r length(neurons@assays$RNA@var.features)` variable genes from `Seurat` found `r length(neurons@assays$SCT@var.features)` from `sctransform`.  The `Seurat` variable features resulted in `r pca_object@misc$sig_pcs` PCs, and the `sctransform` variable genes resulted in `r neurons@reductions$pca@misc$sig_pcs` PCs.
+
+```{r, fig.width = 7, fig.height = 3.2}
+plot_umap_samples <- function(umap) {
+  df <- bind_cols(as.data.frame(umap), vmh$Sample)
+  ggplot(df, aes(x = UMAP_1, y = UMAP_2, color = `...3`)) +
+    geom_point(stroke = 0, size = 1) +
+    theme_void() +
+    theme(legend.text = element_text(size = 7),
+          plot.title = element_text(size = 10, hjust = 0.5))
+}
+
+cowplot::plot_grid(plotlist = list(
+  plot_umap_samples(umap_object@cell.embeddings) + ggtitle("RNA"),
+  plot_umap_samples(vmh@reductions$umap@cell.embeddings) + ggtitle("SCT")
+))
+```
+
+The **SCT** assay looks better, cells are more "clumped", even across samples, making it more likely to find clusters.
+
+```{r, include = FALSE}
+rm(umap_object, pca_object)
+gc()
+```
+
+\pagebreak
+
+# Integration
+Integrating Campbell data with our mouse dataset to determine if more clusters exist in the Campbell data but do not have sufficient sample size to detect.
+
+```{r}
+us <- readRDS("../mouse/vmh.rds")
+us$Dataset <- "Myers"
+vmh$Dataset <- "Campbell"
+```
+
+```{r}
+vmh@misc$cluster_colors <- c("")
+```
+
+```{r}
+vmh$Campbell <- recode(
+  vmh$Campbell, `n29` = "n29.Slc17a6/Bdnf", `n30` = "n30.Slc17a6/Nfib"
+)
+```
+
+```{r, fig.width = 6, fig.height = 3}
+cowplot::plot_grid(plotlist = list(
+  DimPlot(us, label = TRUE) + theme_void() +
+    scale_color_manual(values = us@misc$cluster_colors) +
+    theme(legend.position = "none",
+          plot.title = element_text(hjust = 0.5, size = 10)) +
+    ggtitle("Affinati et al."),
+  DimPlot(vmh, label = TRUE, group.by = "Campbell") +
+    theme_void() +
+    theme(legend.position = "none",
+          plot.title = element_text(hjust = 0.5, size = 10)) +
+    scale_color_manual(values = c("gray50", "gold")) +
+    ggtitle("Campbell et al.")
+))
+```
+
+```{r}
+vmh@misc$markers <- FindAllMarkers(vmh, only.pos = TRUE)
+vmh <- scale_data(vmh, groups = "Sample")
+```
+
+First, which clusters have highly correlated gene expression profiles across datasets?
+
+```{r, fig.height=2, fig.width = 6}
+var_genes <- union(unique(us@misc$markers$gene), unique(vmh@misc$markers$gene))
+
+# keep genes in rownames
+var_genes <- var_genes[var_genes %in% rownames(us@assays$RNA@scale.data)]
+var_genes <- var_genes[var_genes %in% rownames(vmh@assays$RNA@scale.data)]
+
+# Remove var genes with NA scale data
+var_genes <- var_genes[!apply(us@assays$RNA@scale.data[var_genes, ], 1, function(x) any(is.na(x)))]
+var_genes <- var_genes[!apply(vmh@assays$RNA@scale.data[var_genes, ], 1, function(x) any(is.na(x)))]
+
+correlation <- expand.grid(unique(us@active.ident), unique(vmh$Campbell))
+correlation$corr <- apply(correlation, 1, function(x) {
+  cor(
+    Matrix::rowMeans(us@assays$RNA@scale.data[
+      var_genes, names(us@active.ident)[us@active.ident == x["Var1"]]
+      ]),
+    Matrix::rowMeans(vmh@assays$RNA@scale.data[
+      var_genes, names(vmh$Campbell)[vmh$Campbell == x["Var2"]]
+      ])
+    )
+})
+
+correlation %>%
+  ggplot(aes(x = Var1, y = fct_rev(Var2), fill = corr)) +
+  geom_tile() +
+  scale_fill_gradient2() +
+  theme_void() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.text.y = element_text(hjust = 1, vjust = 0.5))
+
+write.csv(correlation, "cluster_correlation.csv", row.names = FALSE)
+```
+
+```{r}
+# combine and integrate
+mtx <- list(us, vmh)
+mtx <- integrate_data(mtx)
+```
+
+```{r}
+mtx <- ScaleData(mtx)
+mtx <- RunPCA(mtx, npcs = 100)
+mtx@reductions$pca@misc$sig_pcs <- knee_test(mtx)
+mtx <- RunUMAP(mtx, dims = 1:mtx@reductions$pca@misc$sig_pcs)
+```
+
+```{r, fig.width = 7.5, fig.height = 3}
+cowplot::plot_grid(plotlist = list(
+  DimPlot(mtx, group.by = "Dataset") + theme_void() +
+    scale_color_manual(values = wesanderson::wes_palette("Royal1")) +
+    ggtitle("Dataset"),
+  FeaturePlot(mtx, "nFeature_RNA") + theme_void() +
+    scale_color_viridis_c(option = "magma") +
+    ggtitle("Genes / cell")
+))
+```
+
+The island on the left that is all Myers and low read depth is from our first 2 samples (Run_2550_premrna and Run_2519_premrna):
+
+```{r, fig.width = 4.5, fig.height = 3}
+DimPlot(mtx, group.by = "Sample") + theme_void() + ggtitle("Sample")
+```
+
+I'll integrate by Sample instead of dataset.
+
+```{r}
+mtx <- SplitObject(mtx, "Sample")
+# some Campbell samples have < 30 cells, removing those
+mtx <- mtx[map_int(mtx, ncol) >= 30]
+mtx <- integrate_data(mtx)
+```
+
+```{r}
+mtx <- ScaleData(mtx)
+mtx <- RunPCA(mtx, npcs = 100)
+mtx@reductions$pca@misc$sig_pcs <- knee_test(mtx)
+mtx <- RunUMAP(mtx, dims = 1:mtx@reductions$pca@misc$sig_pcs)
+```
+
+```{r, fig.width = 7.5, fig.height = 3}
+cowplot::plot_grid(plotlist = list(
+  DimPlot(mtx, group.by = "Dataset", cells = sample(Cells(mtx))) +
+    theme_void() +
+    scale_color_manual(values = wesanderson::wes_palette("Royal1")) +
+    ggtitle("Dataset"),
+  DimPlot(mtx, group.by = "Sample", cells = sample(Cells(mtx))) +
+    theme_void() +
+    ggtitle("Sample")
+), rel_widths = c(0.47, 0.53))
+```
+
+\pagebreak
+
+# Clustering integrated data
+
+```{r}
+resolutions <- seq(0.2, 2, by = 0.2)
+print(paste("Finding clusters for resolutions", paste(resolutions, collapse = ", "), "..."))
+```
+
+```{r, include = FALSE}
+sig_pcs <- mtx@reductions$pca@misc$sig_pcs
+mtx <- FindNeighbors(mtx, dims = 1:sig_pcs)
+
+clusters <- map_dfc(
+  resolutions,
+  ~ FindClusters(mtx, resolution = .x)@active.ident
+)
+gc()
+# get dissimilarity matrix
+sig_pcs <- mtx@reductions$pca@misc$sig_pcs
+distances <- cluster::daisy(mtx@reductions$pca@cell.embeddings[, 1:sig_pcs])
+gc()
+
+# calculate silhouette width for each clustering
+mean_widths <- apply(clusters, 2, function(x) {
+  silhouette_object <- cluster::silhouette(as.numeric(x), distances)
+  summary(silhouette_object)[["avg.width"]]
+})
+
+# choose best resolution based on max mean silhoutte width
+best_resolution <- resolutions[mean_widths == max(mean_widths)]
+
+# add clustering to official ident slot
+mtx@active.ident <- clusters[, resolutions == best_resolution][[1]]
+
+# remove unnecessary object
+rm(resolutions, clusters, sig_pcs, distances, mean_widths); gc()
+```
+
+Using resolution `r best_resolution`, there are `r length(unique(neurons@active.ident))` populations.
+
+
+```{r}
+mtx <- scale_data(mtx, groups = "Sample")
+```
+
+```{r}
+# recode based on similarity
+cluster_order <- order_clusters(mtx, mtx@assays$integrated@var.features)
+mtx@active.ident <- factor(
+  mtx@active.ident,
+  levels = cluster_order,
+  labels = seq(length(unique(mtx@active.ident)))
+)
+```
+
+```{r}
+classes <- data.frame(
+  "New" = mtx@active.ident[mtx$Dataset == "Campbell"],
+  "Old" = vmh@active.ident[Cells(mtx)[mtx$Dataset == "Campbell"]]
+)
+
+cluster_names <- c(
+  `1` = "Foxp2_2",
+  `2` = "Foxp2_1",
+  `3` = "Dlk1_2",
+  `4` = "Dlk1_1",
+  `5` = "Esr1_2",
+  `6` = "Esr1_1",
+  `7` = "Esr1_3",
+  `8` = "Nfib_3",
+  `9` = "Nfib_1",
+  `10` = "Nfib_2",
+  `11` = "Foxp2_3",
+  `12` = "Lepr_1",
+  `13` = "Lepr_4",
+  `14` = "Lepr_7",
+  `15` = "Lepr_2",
+  `16` = "Lepr_5",
+  `17` = "Lepr_3",
+  `18` = "Lepr_6",
+  `19` = "Fezf1_1",
+  `20` = "Fezf1_2",
+  `21` = "Lepr_8",
+  `22` = "Fezf1_3"
+)
+
+mtx$Clusters <- mtx@active.ident
+mtx$Names <- recode(mtx@active.ident, !!!cluster_names)
+
+class_table <- table(classes)
+class_table <- class_table[, names(us@misc$cluster_colors)]
+rgb_colors <- col2rgb(us@misc$cluster_colors)
+rgb2hex <- function(v) rgb(v[1], v[2], v[3], maxColorValue = 255)
+cluster_colors <- apply(class_table, 1, function(x) {
+  total = sum(x)
+  rgb_color = sapply(1:length(x), function(i) x[i]/total * rgb_colors[, i])
+  rgb2hex(rowSums(rgb_color))
+})
+names(cluster_colors) <- recode(names(cluster_colors), !!!cluster_names)
+mtx@misc$cluster_colors <- cluster_colors
+```
+
+```{r}
+mtx@active.ident <- factor(
+  mtx$Names,
+  levels = c(
+    paste0("Dlk1_", seq(sum(str_detect(cluster_names, "Dlk1")))),
+    paste0("Esr1_", seq(sum(str_detect(cluster_names, "Esr1")))),
+    paste0("Nfib_", seq(sum(str_detect(cluster_names, "Nfib")))),
+    paste0("Foxp2_", seq(sum(str_detect(cluster_names, "Foxp2")))),
+    paste0("Lepr_", seq(sum(str_detect(cluster_names, "Lepr")))),
+    paste0("Fezf1_", seq(sum(str_detect(cluster_names, "Fezf1"))))
+  )
+)
+```
+
+---
+
+I'm saving the Campbell data alone as `vmh.rds` and the integrated dataset as `vmh_integrated.rds`.
+
+```{r}
+saveRDS(mtx, "vmh_integrated.rds")
+saveRDS(vmh, "vmh.rds")
+```
